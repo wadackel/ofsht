@@ -40,6 +40,7 @@ jobs:
 
       # Generate short-lived token from GitHub App
       # Token generation after checkout follows official release-plz best practices
+      # Explicit permission specification matches official release-plz configuration
       # SHA-pinned to v2.2.0 for supply chain security
       - name: Generate GitHub App token
         id: release-token
@@ -49,13 +50,8 @@ jobs:
           private-key: ${{ secrets.OFSHT_APP_PRIVATE_KEY }}
           owner: wadackel
           repositories: ofsht
-
-      # Configure global git credentials for release-plz operations
-      # This is required because release-plz operates in a temporary directory
-      # where checkout's persist-credentials setting doesn't apply
-      - name: Configure git credentials
-        run: |
-          git config --global url."https://x-access-token:${{ steps.release-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Run release-plz (release-pr)
         uses: release-plz/action@e1f28dee02b4eecdd2b43b8b868e5acee45334a0 # v0.5.101
