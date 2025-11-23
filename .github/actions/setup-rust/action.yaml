@@ -1,0 +1,52 @@
+name: Setup Rust Toolchain
+description: Setup Rust toolchain using rustup without third-party actions
+
+inputs:
+  toolchain:
+    description: 'Rust toolchain version (e.g., stable, nightly, 1.70.0)'
+    required: false
+    default: 'stable'
+  components:
+    description: 'Comma-separated list of components (e.g., clippy,rustfmt)'
+    required: false
+    default: ''
+  targets:
+    description: 'Comma-separated list of targets (e.g., x86_64-unknown-linux-musl)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Rust toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Update and set default toolchain
+        rustup update ${{ inputs.toolchain }} --no-self-update
+        rustup default ${{ inputs.toolchain }}
+
+        # Add components if specified
+        if [[ -n "${{ inputs.components }}" ]]; then
+          IFS=',' read -ra COMPONENTS <<< "${{ inputs.components }}"
+          for component in "${COMPONENTS[@]}"; do
+            component=$(echo "$component" | xargs)  # Trim whitespace
+            echo "Adding component: $component"
+            rustup component add "$component"
+          done
+        fi
+
+        # Add targets if specified
+        if [[ -n "${{ inputs.targets }}" ]]; then
+          IFS=',' read -ra TARGETS <<< "${{ inputs.targets }}"
+          for target in "${TARGETS[@]}"; do
+            target=$(echo "$target" | xargs)  # Trim whitespace
+            echo "Adding target: $target"
+            rustup target add "$target"
+          done
+        fi
+
+        # Display installed toolchain info
+        rustc --version
+        cargo --version
