@@ -1,5 +1,9 @@
 # ofsht
 
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/wadackel/ofsht/ci.yaml?branch=main&style=flat-square)
+![Crates.io Version](https://img.shields.io/crates/v/ofsht?style=flat-square)
+![Crates.io License](https://img.shields.io/crates/l/ofsht?style=flat-square)
+
 A command-line tool for managing Git worktrees with automation features.
 
 ## Demo
