@@ -261,7 +261,7 @@ jobs:
           echo "Triggering Homebrew tap update for version $TAG..."
 
           # Trigger workflow
-          gh workflow run bump-formula.yaml \
+          gh workflow run update-formula.yaml \
             --repo "$REPO" \
             --field formula=ofsht \
             --field version="$TAG" \
@@ -276,14 +276,14 @@ jobs:
           # Find the most recent run for this workflow
           RUN_ID=$(gh run list \
             --repo "$REPO" \
-            --workflow bump-formula.yaml \
+            --workflow update-formula.yaml \
             --limit 1 \
             --json databaseId \
             --jq '.[0].databaseId')
 
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
             echo "Warning: Could not find workflow run"
-            echo "Check manually at: https://github.com/$REPO/actions/workflows/bump-formula.yaml"
+            echo "Check manually at: https://github.com/$REPO/actions/workflows/update-formula.yaml"
             exit 0
           fi
 
