@@ -39,7 +39,7 @@ jobs:
         with:
           command: release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # Release unpublished packages
@@ -69,7 +69,7 @@ jobs:
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Extract tag name
@@ -199,7 +199,7 @@ jobs:
 
       - name: Upload release assets
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="${{ needs.release-plz-release.outputs.tag_name }}"
@@ -213,7 +213,7 @@ jobs:
 
       - name: Verify release assets
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="${{ needs.release-plz-release.outputs.tag_name }}"
@@ -231,7 +231,7 @@ jobs:
 
       - name: Publish release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="${{ needs.release-plz-release.outputs.tag_name }}"
@@ -242,21 +242,44 @@ jobs:
           echo "Published release $tag"
 
   # Update Homebrew tap
+  # This job uses a GitHub App for authentication instead of a PAT for improved security:
+  # - Repository-scoped permissions (only homebrew-tap)
+  # - Automatic token rotation (per workflow run)
+  # - 1-hour token expiration
+  # - Clear audit trail via GitHub App activity logs
+  #
+  # Required setup:
+  # - GitHub App with permissions: actions (write/read), contents (read)
+  # - App installed on both ofsht and homebrew-tap repositories
+  # - OFSHT_APP_ID variable and OFSHT_APP_PRIVATE_KEY secret configured
   update-homebrew-tap:
     name: Update Homebrew Tap
     needs: [release-plz-release, attach-assets]
     if: needs.release-plz-release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # Minimal permissions (GitHub App token handles homebrew-tap access)
     steps:
+      # Generate a short-lived token (1-hour expiration) scoped to homebrew-tap repository
+      # SHA-pinned to v2.2.0 for supply chain security
+      - name: Generate GitHub App token
+        id: generate-token
+        uses: actions/create-github-app-token@7e473efe3cb98aa54f8d4bac15400b15fad77d94 # v2.2.0
+        with:
+          app-id: ${{ vars.OFSHT_APP_ID }}
+          private-key: ${{ secrets.OFSHT_APP_PRIVATE_KEY }}
+          owner: wadackel
+          repositories: homebrew-tap
+
       - name: Trigger and monitor tap update workflow
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
         run: |
           set -euo pipefail
-          set -x
 
           TAG="${{ needs.release-plz-release.outputs.tag_name }}"
           REPO="wadackel/homebrew-tap"
+          WORKFLOW_START_TIME="${{ github.event.repository.pushed_at }}"
 
           echo "Triggering Homebrew tap update for version $TAG..."
 
@@ -265,7 +288,8 @@ jobs:
             --repo "$REPO" \
             --field formula=ofsht \
             --field version="$TAG" \
-            --field repository=wadackel/ofsht
+            --field repository=wadackel/ofsht \
+            || { echo "::error::Failed to trigger workflow"; exit 1; }
 
           echo "Workflow dispatch sent successfully"
 
@@ -273,16 +297,17 @@ jobs:
           echo "Waiting for workflow run to start..."
           sleep 10
 
-          # Find the most recent run for this workflow
+          # Find the most recent run for this workflow (filter by workflow start time)
           RUN_ID=$(gh run list \
             --repo "$REPO" \
             --workflow update.yaml \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
+            --limit 5 \
+            --json databaseId,createdAt \
+            --jq --arg start_time "$WORKFLOW_START_TIME" \
+              'map(select(.createdAt >= $start_time)) | .[0].databaseId')
 
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "Warning: Could not find workflow run"
+            echo "::warning::Could not find workflow run, skipping verification"
             echo "Check manually at: https://github.com/$REPO/actions/workflows/update.yaml"
             exit 0
           fi
@@ -308,9 +333,10 @@ jobs:
                 echo "Check PR at: https://github.com/$REPO/pulls"
                 exit 0
               else
-                echo "✗ Homebrew tap update failed with conclusion: $CONCLUSION"
+                echo "::warning::Homebrew tap update failed with conclusion: $CONCLUSION"
                 echo "View logs at: https://github.com/$REPO/actions/runs/$RUN_ID"
-                exit 1
+                echo "Note: Release was published successfully despite tap update failure"
+                exit 0
               fi
             fi
 
@@ -318,6 +344,6 @@ jobs:
             ELAPSED=$((ELAPSED + 10))
           done
 
-          echo "⚠ Workflow monitoring timed out after ${TIMEOUT}s"
+          echo "::warning::Workflow monitoring timed out after ${TIMEOUT}s"
           echo "Workflow may still be running: https://github.com/$REPO/actions/runs/$RUN_ID"
-          exit 1
+          exit 0
