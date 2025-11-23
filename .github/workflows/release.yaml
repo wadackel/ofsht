@@ -27,7 +27,19 @@ jobs:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
       # Generate short-lived token from GitHub App
+      # Token generation after checkout follows official release-plz best practices
       # SHA-pinned to v2.2.0 for supply chain security
       - name: Generate GitHub App token
         id: release-token
@@ -37,22 +49,6 @@ jobs:
           private-key: ${{ secrets.OFSHT_APP_PRIVATE_KEY }}
           owner: wadackel
           repositories: ofsht
-
-      - name: Checkout repository
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-        with:
-          fetch-depth: 0
-          token: ${{ steps.release-token.outputs.token }}
-          persist-credentials: true
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-
-      - name: Configure git credentials for release-plz
-        run: |
-          git config --global url."https://x-access-token:${{ steps.release-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
 
       - name: Run release-plz (release-pr)
         uses: release-plz/action@e1f28dee02b4eecdd2b43b8b868e5acee45334a0 # v0.5.101
