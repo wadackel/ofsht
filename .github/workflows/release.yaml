@@ -247,9 +247,8 @@ jobs:
     needs: [release-plz-release, attach-assets]
     if: needs.release-plz-release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
-      - name: Trigger tap update workflow
+      - name: Trigger and monitor tap update workflow
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
@@ -257,14 +256,68 @@ jobs:
           set -x
 
           TAG="${{ needs.release-plz-release.outputs.tag_name }}"
+          REPO="wadackel/homebrew-tap"
 
           echo "Triggering Homebrew tap update for version $TAG..."
 
+          # Trigger workflow
           gh workflow run bump-formula.yaml \
-            --repo wadackel/homebrew-tap \
+            --repo "$REPO" \
             --field formula=ofsht \
             --field version="$TAG" \
             --field repository=wadackel/ofsht
 
-          echo "Homebrew tap update workflow triggered successfully"
-          echo "Check PR at: https://github.com/wadackel/homebrew-tap/pulls"
+          echo "Workflow dispatch sent successfully"
+
+          # Wait for the workflow run to appear (gh workflow run doesn't return run ID)
+          echo "Waiting for workflow run to start..."
+          sleep 10
+
+          # Find the most recent run for this workflow
+          RUN_ID=$(gh run list \
+            --repo "$REPO" \
+            --workflow bump-formula.yaml \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "Warning: Could not find workflow run"
+            echo "Check manually at: https://github.com/$REPO/actions/workflows/bump-formula.yaml"
+            exit 0
+          fi
+
+          echo "Workflow triggered with run ID: $RUN_ID"
+          echo "Monitoring workflow at: https://github.com/$REPO/actions/runs/$RUN_ID"
+
+          # Wait a few seconds for the workflow to start
+          sleep 5
+
+          # Monitor workflow completion (with timeout)
+          TIMEOUT=300  # 5 minutes
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            STATUS=$(gh run view "$RUN_ID" --repo "$REPO" --json status --jq '.status')
+            CONCLUSION=$(gh run view "$RUN_ID" --repo "$REPO" --json conclusion --jq '.conclusion' || echo "")
+
+            echo "[$ELAPSED s] Workflow status: $STATUS, conclusion: $CONCLUSION"
+
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "✓ Homebrew tap update completed successfully"
+                echo "Check PR at: https://github.com/$REPO/pulls"
+                exit 0
+              else
+                echo "✗ Homebrew tap update failed with conclusion: $CONCLUSION"
+                echo "View logs at: https://github.com/$REPO/actions/runs/$RUN_ID"
+                exit 1
+              fi
+            fi
+
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+
+          echo "⚠ Workflow monitoring timed out after ${TIMEOUT}s"
+          echo "Workflow may still be running: https://github.com/$REPO/actions/runs/$RUN_ID"
+          exit 1
