@@ -65,7 +65,6 @@ A command-line tool for managing Git worktrees with automation features.
 ### From crates.io (Recommended)
 
 ```bash
-# Coming soon
 cargo install ofsht
 ```
 
