@@ -435,18 +435,82 @@ Good alert usage in README.md:
 
 ### Commit Message Guidelines
 
-- Use conventional commits format (optional but appreciated)
-- Write clear, concise commit messages
-- Focus on the "why" rather than the "what"
-- Reference issue numbers when applicable
+This project follows the [Conventional Commits](https://www.conventionalcommits.org/) specification. This enables automatic changelog generation and semantic versioning for releases.
 
-Examples:
+#### Format
+
 ```
-feat: add fzf integration for interactive worktree selection
-fix: resolve terminal hang by properly handling stdio pipes
-docs: standardize all content to English
-refactor: display commit hashes without color in ls command
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
 ```
+
+#### Commit Types
+
+| Type | Description | Changelog Section | Version Bump |
+|------|-------------|-------------------|--------------|
+| `feat` | New feature | Added | Minor (0.x.0) |
+| `fix` | Bug fix | Fixed | Patch (0.0.x) |
+| `perf` | Performance improvement | Performance | Patch |
+| `refactor` | Code refactoring | Changed | Patch |
+| `docs` | Documentation changes | Documentation | Patch |
+| `test` | Test additions/changes | Testing | Patch |
+| `build` | Build system changes | Build | Patch |
+| `deps` | Dependency updates | Dependencies | Patch |
+| `ci` | CI/CD changes | CI/CD | Patch |
+| `chore` | Other maintenance | Miscellaneous | Patch |
+| `style` | Code style changes | Styling | Patch |
+
+#### Breaking Changes
+
+Breaking changes trigger a major version bump (x.0.0 in 1.x, or 0.x.0 in 0.x):
+
+```bash
+# Method 1: Use BREAKING CHANGE in footer
+git commit -m "feat: redesign config file format
+
+BREAKING CHANGE: Config file format changed from JSON to TOML"
+
+# Method 2: Add ! after type
+git commit -m "feat!: redesign config file format"
+```
+
+#### Examples
+
+```bash
+# Feature addition (bumps minor version)
+git commit -m "feat: add fzf integration for interactive worktree selection"
+
+# Bug fix (bumps patch version)
+git commit -m "fix: resolve terminal hang by properly handling stdio pipes"
+
+# Performance improvement
+git commit -m "perf: optimize worktree path resolution"
+
+# Documentation update
+git commit -m "docs: standardize all content to English"
+
+# Dependency update
+git commit -m "deps: update clap to 4.5.0"
+
+# Breaking change
+git commit -m "feat!: change default worktree directory template"
+```
+
+#### Optional Scope
+
+Add scope to provide additional context:
+
+```bash
+git commit -m "feat(tmux): add pane creation support"
+git commit -m "fix(config): resolve XDG_CONFIG_HOME path correctly"
+git commit -m "docs(hooks): document run/copy/link actions"
+```
+
+> [!NOTE]
+> Conventional Commits format is **required** for proper changelog generation. All pull requests must follow this convention.
 
 ### Code Review
 
