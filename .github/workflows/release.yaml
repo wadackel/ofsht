@@ -50,6 +50,10 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Configure git credentials for release-plz
+        run: |
+          git config --global url."https://x-access-token:${{ steps.release-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
+
       - name: Run release-plz (release-pr)
         uses: release-plz/action@e1f28dee02b4eecdd2b43b8b868e5acee45334a0 # v0.5.101
         with:
