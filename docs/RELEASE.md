@@ -255,7 +255,7 @@ Windows support may be added in the future.
 
 ### Workflow fails at "Upload release assets"
 
-- Verify `RELEASE_PLZ_GITHUB_TOKEN` has correct permissions (needs `contents: write`)
+- Verify workflow has `contents: write` permission
 - Check that artifacts were created in previous jobs
 - Ensure the draft release was created successfully by release-plz
 - Verify GitHub CLI (`gh`) is available in the runner
@@ -277,7 +277,7 @@ gh release view v0.x.0 --json assets --jq '.assets[].name'
 ### Workflow fails at "Publish release"
 
 - Verify the draft release exists
-- Check `RELEASE_PLZ_GITHUB_TOKEN` permissions
+- Check workflow has `contents: write` permission
 - Ensure Immutable releases is enabled in repository settings
 - Verify all assets are attached before publishing
 
@@ -288,6 +288,28 @@ This should not happen due to the verification step, but if it does:
 - **DO NOT** try to add assets to a published release (Immutable releases prevents this)
 - Create a new patch version with the missing binaries
 - Document the issue in the new release notes
+
+### Workflow fails at "Update Homebrew Tap"
+
+The Homebrew tap update uses a GitHub App for authentication:
+
+- Verify `OFSHT_APP_ID` variable is set correctly
+- Verify `OFSHT_APP_PRIVATE_KEY` secret is set with the full PEM content
+- Check that the GitHub App is installed on both repositories (ofsht, homebrew-tap)
+- Verify App permissions: `actions: write`, `actions: read`, `contents: read`
+- Check App installation status: https://github.com/settings/installations
+
+**Note**: Homebrew tap update failures emit warnings but don't fail the release. The main release will succeed even if tap update fails.
+
+Manual tap update:
+```bash
+TAG="v0.x.0"
+gh workflow run update.yaml \
+  --repo wadackel/homebrew-tap \
+  --field formula=ofsht \
+  --field version="$TAG" \
+  --field repository=wadackel/ofsht
+```
 
 ## References
 
