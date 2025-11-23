@@ -76,8 +76,8 @@ jobs:
         id: extract_tag
         if: steps.release.outputs.releases_created == 'true'
         run: |
-          # Get the latest tag created by release-plz
-          tag=$(git describe --tags --abbrev=0)
+          # Extract tag from release-plz output
+          tag=$(echo '${{ steps.release.outputs.release }}' | jq -r '.releases[0].tag')
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Created release tag: $tag"
 
