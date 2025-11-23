@@ -50,7 +50,7 @@ jobs:
           toolchain: stable
 
       - name: Run release-plz (release-pr)
-        uses: release-plz/action@01df7609d1a7310c0776a102df00daf509d56e33 # v0.5
+        uses: release-plz/action@e1f28dee02b4eecdd2b43b8b868e5acee45334a0 # v0.5.101
         with:
           command: release-pr
         env:
@@ -80,7 +80,7 @@ jobs:
 
       - name: Run release-plz (release)
         id: release
-        uses: release-plz/action@01df7609d1a7310c0776a102df00daf509d56e33 # v0.5
+        uses: release-plz/action@e1f28dee02b4eecdd2b43b8b868e5acee45334a0 # v0.5.101
         with:
           command: release
         env:
