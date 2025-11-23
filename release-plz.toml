@@ -1,0 +1,96 @@
+# Configuration for release-plz
+# Documentation: https://release-plz.ieni.dev/docs/config
+
+[workspace]
+# Always create releases on main branch pushes (fully automated)
+release_always = true
+
+# Automatically update changelogs
+changelog_update = true
+
+# Branch prefix for release PRs
+pr_branch_prefix = "release-plz/"
+
+# Enable GitHub Releases
+git_release_enable = true
+
+# Create releases as drafts (published later after assets are uploaded)
+# This ensures Immutable releases compatibility
+git_release_draft = true
+
+# Use the repository's default branch as the target
+# git_release_target_commitish = "main"
+
+[[package]]
+# Package-specific configuration for ofsht
+name = "ofsht"
+
+# Path to the changelog file (relative to package root)
+changelog_path = "CHANGELOG.md"
+
+# Changelog configuration
+[changelog]
+# Keep the existing Keep a Changelog format
+header = """# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+
+# Changelog body template
+# Conventional Commits will be grouped into sections
+body = """
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [Unreleased]
+{% endif -%}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}
+{%- if commit.breaking %} [**BREAKING**]{% endif %}
+{% endfor %}
+{% endfor %}
+"""
+
+# Configure commit grouping based on Conventional Commits
+# https://www.conventionalcommits.org/
+[changelog.commit_parsers]
+# Breaking changes
+{ message = ".*", breaking = true, group = "Breaking Changes" }
+
+# Features
+{ message = "^feat", group = "Added" }
+
+# Bug fixes
+{ message = "^fix", group = "Fixed" }
+
+# Performance improvements
+{ message = "^perf", group = "Performance" }
+
+# Refactoring
+{ message = "^refactor", group = "Changed" }
+
+# Documentation
+{ message = "^docs", group = "Documentation" }
+
+# Tests
+{ message = "^test", group = "Testing" }
+
+# Build system and dependencies
+{ message = "^build", group = "Build" }
+{ message = "^deps", group = "Dependencies" }
+{ message = "^chore\\(deps\\)", group = "Dependencies" }
+
+# CI/CD
+{ message = "^ci", group = "CI/CD" }
+
+# Other chores
+{ message = "^chore", group = "Miscellaneous" }
+
+# Style changes
+{ message = "^style", group = "Styling" }

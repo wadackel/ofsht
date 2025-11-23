@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux GNU
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+            strip: strip
+            archive_suffix: tar.gz
+
+          # Linux MUSL (static binary)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            strip: strip
+            archive_suffix: tar.gz
+
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+            strip: strip
+            archive_suffix: tar.gz
+
+          # macOS ARM64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: true
+            strip: strip
+            archive_suffix: tar.gz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            sudo apt-get update
+            sudo apt-get install -y musl-tools
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary
+        run: ${{ matrix.strip }} target/${{ matrix.target }}/release/ofsht
+
+      - name: Create archive
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ofsht-${{ matrix.target }}.${{ matrix.archive_suffix }} ofsht
+          mv ofsht-${{ matrix.target }}.${{ matrix.archive_suffix }} ${{ github.workspace }}/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+        with:
+          name: ofsht-${{ matrix.target }}
+          path: ofsht-${{ matrix.target }}.${{ matrix.archive_suffix }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -name "*.tar.gz" -exec mv {} release-assets/ \;
+          ls -lh release-assets/
+
+      - name: Run release-plz
+        id: release_plz
+        run: |
+          set -euo pipefail
+
+          # Install release-plz
+          cargo install release-plz --locked
+
+          # Run release-plz and capture JSON output
+          release-plz release -o json > release-plz.json
+          cat release-plz.json
+
+          # Extract tag from JSON output
+          tag=$(jq -r '.releases[0].tag' release-plz.json)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $tag"
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_plz.outputs.tag }}"
+
+          # Upload all assets to the draft release
+          gh release upload "$tag" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          echo "Uploaded assets to release $tag"
+
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_plz.outputs.tag }}"
+
+          # Check that exactly 4 assets were uploaded
+          asset_count=$(gh release view "$tag" --json assets --jq '.assets | length')
+
+          if [ "$asset_count" -ne 4 ]; then
+            echo "Error: Expected 4 assets, found $asset_count"
+            gh release view "$tag" --json assets --jq '.assets[].name'
+            exit 1
+          fi
+
+          echo "Verified: $asset_count assets uploaded successfully"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_plz.outputs.tag }}"
+
+          # Publish the draft release
+          gh release edit "$tag" --draft=false --latest
+
+          echo "Published release $tag"
