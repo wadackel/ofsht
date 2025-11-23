@@ -14,33 +14,38 @@ Releases are fully automated using [release-plz](https://release-plz.ieni.dev/) 
 
 ## Release Workflow
 
-### Automatic Release (Current Setup)
+### Fully Automated Release Process
+
+The release process is **completely automated** using release-plz. You don't need to manually create tags or trigger workflows.
+
+#### How It Works
 
 1. **Development**: Work on features/fixes on feature branches
 2. **Commit**: Use Conventional Commits format (see below)
 3. **Merge to main**: Merge pull requests to the main branch
-4. **Tag**: Create and push a version tag
-5. **Automation**: GitHub Actions automatically:
-   - Builds binaries for all platforms
-   - Publishes to crates.io
-   - Creates GitHub Release with assets
-   - Updates CHANGELOG.md
+4. **Automatic Release PR Creation**:
+   - GitHub Actions automatically creates/updates a release PR
+   - The PR includes version bumps and CHANGELOG updates
+   - Review the release PR to verify changes
+5. **Merge Release PR**: Once approved, merge the release PR
+6. **Automatic Publishing**:
+   - GitHub Actions automatically publishes to crates.io
+   - Builds binaries for all platforms (Linux GNU/MUSL, macOS x86_64/ARM64)
+   - Creates GitHub Release with binary assets
+   - Tags the release
 
-### Triggering a Release
+#### Workflow Jobs
 
-```bash
-# Ensure main branch is up to date
-git checkout main
-git pull origin main
+The `.github/workflows/release.yaml` workflow runs on every push to `main`:
 
-# Create a version tag (must start with 'v')
-git tag v0.2.0
+1. **`release-plz-pr`**: Creates/updates a release PR with version bumps and CHANGELOG
+2. **`release-plz-release`**: Publishes unpublished packages to crates.io
+3. **`build-binaries`**: Builds cross-platform binaries (only when a release is created)
+4. **`attach-assets`**: Attaches binaries to the GitHub Release and publishes it
 
-# Push the tag to trigger release workflow
-git push origin v0.2.0
-```
+### No Manual Tag Creation Needed
 
-The `.github/workflows/release.yaml` workflow will automatically start.
+Unlike traditional workflows, you **do not** need to manually create or push version tags. The release-plz automation handles this automatically when you merge the release PR.
 
 ## Conventional Commits
 

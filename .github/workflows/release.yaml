@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -12,8 +12,80 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  # Create a PR with the new versions and changelog, preparing the next release
+  release-plz-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Run release-plz (release-pr)
+        uses: release-plz/release-plz@57f50ec9b6e45004b1c4951a78e36dfe1db200dd # main
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Release unpublished packages
+  release-plz-release:
+    name: Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.releases_created }}
+      tag_name: ${{ steps.extract_tag.outputs.tag }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Run release-plz (release)
+        id: release
+        uses: release-plz/release-plz@57f50ec9b6e45004b1c4951a78e36dfe1db200dd # main
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Extract tag name
+        id: extract_tag
+        if: steps.release.outputs.releases_created == 'true'
+        run: |
+          # Get the latest tag created by release-plz
+          tag=$(git describe --tags --abbrev=0)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Created release tag: $tag"
+
+  # Build binaries for multiple platforms (only when release is created)
+  build-binaries:
     name: Build ${{ matrix.target }}
+    needs: release-plz-release
+    if: needs.release-plz-release.outputs.release_created == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -104,21 +176,13 @@ jobs:
           path: ofsht-${{ matrix.target }}.${{ matrix.archive_suffix }}
           if-no-files-found: error
 
-  release:
-    name: Create Release
-    needs: build
+  # Attach binaries to GitHub Release
+  attach-assets:
+    name: Attach Release Assets
+    needs: [release-plz-release, build-binaries]
+    if: needs.release-plz-release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-        with:
-          fetch-depth: 0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -130,32 +194,12 @@ jobs:
           find artifacts -type f -name "*.tar.gz" -exec mv {} release-assets/ \;
           ls -lh release-assets/
 
-      - name: Run release-plz
-        id: release_plz
-        run: |
-          set -euo pipefail
-
-          # Install release-plz
-          cargo install release-plz --locked
-
-          # Run release-plz and capture JSON output
-          release-plz release -o json > release-plz.json
-          cat release-plz.json
-
-          # Extract tag from JSON output
-          tag=$(jq -r '.releases[0].tag' release-plz.json)
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Release tag: $tag"
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ steps.release_plz.outputs.tag }}"
+          tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Upload all assets to the draft release
           gh release upload "$tag" release-assets/* \
@@ -169,7 +213,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ steps.release_plz.outputs.tag }}"
+          tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Check that exactly 4 assets were uploaded
           asset_count=$(gh release view "$tag" --json assets --jq '.assets | length')
@@ -187,7 +231,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ steps.release_plz.outputs.tag }}"
+          tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Publish the draft release
           gh release edit "$tag" --draft=false --latest
