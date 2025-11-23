@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2025-11-23
+
+### Breaking Changes
+
+- Enable crates.io installation instructions
+
+- Update Homebrew installation and release documentation
+
+- Monitor Homebrew tap workflow completion
+
+- Add Homebrew tap auto-update on release
+
+
 ## [0.1.4] - 2025-11-23
 
 ### Breaking Changes
