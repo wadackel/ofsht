@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.1.8] - 2025-11-23
+
+### Breaking Changes
+
+- Add global git credentials for release-plz operations
+
+- Align release-plz workflow with official best practices
+
+- Configure global git credentials for release-plz
+
+- Enable persist-credentials for release-plz git operations
+
+- Set persist-credentials to false for security best practice
+
+- Enable persist-credentials for release-plz git operations
+
+- Configure git credentials for release-plz push
+
+- Update release-plz/action to v0.5.101 for GitHub App support
+
+- Use GitHub App token for release PR creation
+
+- Migrate from PAT to GitHub App authentication ([#10](https://github.com/wadackel/ofsht/pull/10))
+
 
 ## [Unreleased]
 
