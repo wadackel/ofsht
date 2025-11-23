@@ -34,9 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
+        uses: ./.github/actions/setup-rust
 
       # Generate short-lived token from GitHub App
       # Token generation after checkout follows official release-plz best practices
@@ -76,9 +74,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
+        uses: ./.github/actions/setup-rust
 
       - name: Run release-plz (release)
         id: release
@@ -143,9 +139,8 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools

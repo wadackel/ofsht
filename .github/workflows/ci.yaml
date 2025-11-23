@@ -38,9 +38,8 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: stable
           components: clippy,rustfmt
 
       - name: Setup mise
