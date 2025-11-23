@@ -219,11 +219,11 @@ jobs:
           tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Check that exactly 4 assets were uploaded
-          asset_count=$(gh release view "$tag" --json assets --jq '.assets | length')
+          asset_count=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
 
           if [ "$asset_count" -ne 4 ]; then
             echo "Error: Expected 4 assets, found $asset_count"
-            gh release view "$tag" --json assets --jq '.assets[].name'
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
             exit 1
           fi
 
@@ -237,6 +237,6 @@ jobs:
           tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Publish the draft release
-          gh release edit "$tag" --draft=false --latest
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
           echo "Published release $tag"
