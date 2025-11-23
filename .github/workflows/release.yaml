@@ -77,7 +77,7 @@ jobs:
         if: steps.release.outputs.releases_created == 'true'
         run: |
           # Extract tag from release-plz output
-          tag=$(echo '${{ steps.release.outputs.release }}' | jq -r '.releases[0].tag')
+          tag=$(echo '${{ steps.release.outputs.releases }}' | jq -r '.[0].tag')
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Created release tag: $tag"
 
