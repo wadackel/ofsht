@@ -53,10 +53,10 @@ body = """
 
 # Configure commit grouping based on Conventional Commits
 # https://www.conventionalcommits.org/
+# Breaking changes are automatically detected from:
+# - Type with ! suffix (e.g., feat!, fix!)
+# - BREAKING CHANGE: footer in commit message
 commit_parsers = [
-    # Breaking changes (must be first to catch all breaking commits)
-    { message = ".*", breaking = true, group = "Breaking Changes" },
-
     # Features
     { message = "^feat", group = "Added" },
 
