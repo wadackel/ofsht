@@ -512,6 +512,55 @@ git commit -m "docs(hooks): document run/copy/link actions"
 > [!NOTE]
 > Conventional Commits format is **required** for proper changelog generation. All pull requests must follow this convention.
 
+## Release Process
+
+### Automated Release Flow
+
+ofsht uses an automated release process powered by [release-plz](https://release-plz.dev/):
+
+1. **Development**: Make changes following conventional commits
+2. **Release PR**: release-plz automatically creates/updates a PR with:
+   - Version bump based on commit types
+   - Updated CHANGELOG.md
+   - Updated Cargo.toml version
+3. **Merge**: Merge the release PR to trigger the release
+4. **Automated Publishing**:
+   - GitHub release is created
+   - Binaries are built for all platforms (macOS arm64/x86_64, Linux x86_64/musl)
+   - Binaries are attached to the GitHub release
+   - Package is published to crates.io
+   - **Homebrew formula is automatically updated via PR**
+
+### Homebrew Distribution
+
+The Homebrew tap (`wadackel/homebrew-tap`) is automatically updated on each release:
+
+1. **Trigger**: The `update-homebrew-tap` job runs after binaries are uploaded
+2. **Workflow**: Triggers `bump-formula.yaml` in the tap repository
+3. **Formula Update**: Downloads release binaries, calculates SHA256, updates formula
+4. **Pull Request**: Creates PR in tap repository with updated formula
+5. **Review & Merge**: Manually review and merge the PR to publish the update
+
+**Tap Repository**: https://github.com/wadackel/homebrew-tap
+
+**Troubleshooting Homebrew Updates**:
+
+- If the tap update fails, check the [tap repository actions](https://github.com/wadackel/homebrew-tap/actions)
+- The main release will still succeed even if tap update fails
+- Tap updates can be triggered manually via the tap repository's Actions tab
+- Required secret: `HOMEBREW_TAP_TOKEN` (PAT with workflow permissions)
+
+### Manual Release
+
+If you need to trigger a release manually:
+
+1. Ensure all changes are committed and pushed
+2. Use the GitHub Actions UI to run the release workflow
+3. Or create a release tag manually: `git tag v0.x.y && git push origin v0.x.y`
+
+> [!WARNING]
+> Manual releases bypass the conventional commit validation and may result in incorrect version bumps or changelogs.
+
 ### Code Review
 
 - All submissions require review before merging

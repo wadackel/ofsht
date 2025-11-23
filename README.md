@@ -90,7 +90,6 @@ sudo mv ofsht /usr/local/bin/
 ### From Homebrew
 
 ```bash
-# Coming soon
 brew install wadackel/tap/ofsht
 ```
 
