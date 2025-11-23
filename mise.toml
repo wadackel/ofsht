@@ -1,0 +1,3 @@
+[tools]
+just = "1.43.1"
+vhs = "latest"
