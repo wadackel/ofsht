@@ -43,6 +43,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ steps.release-token.outputs.token }}
+          persist-credentials: true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
