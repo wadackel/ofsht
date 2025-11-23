@@ -18,15 +18,9 @@ git_release_enable = true
 # This ensures Immutable releases compatibility
 git_release_draft = true
 
-# Use the repository's default branch as the target
-# git_release_target_commitish = "main"
-
 [[package]]
 # Package-specific configuration for ofsht
 name = "ofsht"
-
-# Path to the changelog file (relative to package root)
-changelog_path = "CHANGELOG.md"
 
 # Changelog configuration
 [changelog]
@@ -59,38 +53,41 @@ body = """
 
 # Configure commit grouping based on Conventional Commits
 # https://www.conventionalcommits.org/
-[changelog.commit_parsers]
-# Breaking changes
-{ message = ".*", breaking = true, group = "Breaking Changes" }
+commit_parsers = [
+    # Breaking changes (must be first to catch all breaking commits)
+    { message = ".*", breaking = true, group = "Breaking Changes" },
 
-# Features
-{ message = "^feat", group = "Added" }
+    # Features
+    { message = "^feat", group = "Added" },
 
-# Bug fixes
-{ message = "^fix", group = "Fixed" }
+    # Bug fixes
+    { message = "^fix", group = "Fixed" },
 
-# Performance improvements
-{ message = "^perf", group = "Performance" }
+    # Performance improvements
+    { message = "^perf", group = "Performance" },
 
-# Refactoring
-{ message = "^refactor", group = "Changed" }
+    # Refactoring
+    { message = "^refactor", group = "Changed" },
 
-# Documentation
-{ message = "^docs", group = "Documentation" }
+    # Documentation
+    { message = "^docs", group = "Documentation" },
 
-# Tests
-{ message = "^test", group = "Testing" }
+    # Tests
+    { message = "^test", group = "Testing" },
 
-# Build system and dependencies
-{ message = "^build", group = "Build" }
-{ message = "^deps", group = "Dependencies" }
-{ message = "^chore\\(deps\\)", group = "Dependencies" }
+    # Dependency updates (before build, more specific)
+    { message = "^deps", group = "Dependencies" },
+    { message = "^chore\\(deps\\)", group = "Dependencies" },
 
-# CI/CD
-{ message = "^ci", group = "CI/CD" }
+    # Build system
+    { message = "^build", group = "Build" },
 
-# Other chores
-{ message = "^chore", group = "Miscellaneous" }
+    # CI/CD
+    { message = "^ci", group = "CI/CD" },
 
-# Style changes
-{ message = "^style", group = "Styling" }
+    # Other chores
+    { message = "^chore", group = "Miscellaneous" },
+
+    # Style changes
+    { message = "^style", group = "Styling" },
+]
