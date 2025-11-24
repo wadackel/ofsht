@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2025-11-24
+
+### Changed
+
+- Implement environment-aware config template generation ([#17](https://github.com/wadackel/ofsht/pull/17))
+
+- Replace third-party rust-toolchain action with composite action ([#14](https://github.com/wadackel/ofsht/pull/14))
+
+
+### Documentation
+
+- Add emojis to Features section for better visual clarity ([#16](https://github.com/wadackel/ofsht/pull/16))
+
+- Add mise installation support via ubi backend ([#15](https://github.com/wadackel/ofsht/pull/15))
+
+
+### Fixed
+
+- Correct commit_parsers to avoid false breaking changes
+
+- Restore global git credentials (required for this environment)
+
+- Add global git credentials for release-plz operations
+
+- Configure global git credentials for release-plz
+
+- Enable persist-credentials for release-plz git operations
+
+- Configure git credentials for release-plz push
+
+- Update release-plz/action to v0.5.101 for GitHub App support
+
+- Use GitHub App token for release PR creation
+
+
+### Miscellaneous
+
+- Test minimal configuration matching official release-plz
+
+- Add explicit permissions to GitHub App token generation
+
+- Align release-plz workflow with official best practices
+
+- Set persist-credentials to false for security best practice
+
+- Enable persist-credentials for release-plz git operations
+
+- Migrate from PAT to GitHub App authentication ([#10](https://github.com/wadackel/ofsht/pull/10))
+
+
 ## [0.1.7] - 2025-11-23
 
 ### Breaking Changes
