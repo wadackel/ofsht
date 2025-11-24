@@ -178,6 +178,10 @@ jobs:
       - name: Strip binary
         run: ${{ matrix.strip }} target/${{ matrix.target }}/release/ofsht
 
+      # IMPORTANT: Asset naming format is critical for mise ubi backend compatibility
+      # Format: ofsht-${target}.tar.gz containing single ofsht binary at root
+      # Changes to naming or archive structure will break mise installations
+      # See CONTRIBUTING.md "mise ubi Distribution" section for details
       - name: Create archive
         run: |
           cd target/${{ matrix.target }}/release

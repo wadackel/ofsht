@@ -34,6 +34,11 @@ curl https://mise.run | sh
 
 **Other platforms**: See [mise installation guide](https://mise.jdx.dev/getting-started.html)
 
+> [!TIP]
+> **Dogfooding**: ofsht itself is also installable via mise: `mise use -g ubi:wadackel/ofsht`
+>
+> Note: `mise install` (without arguments) only installs development tools from `mise.toml` (just, vhs). Installing ofsht via mise is optional and requires the explicit `mise use -g` command above.
+
 #### Installing Development Tools
 
 After installing mise:
@@ -549,6 +554,29 @@ The Homebrew tap (`wadackel/homebrew-tap`) is automatically updated on each rele
 - The main release will still succeed even if tap update fails
 - Tap updates can be triggered manually via the tap repository's Actions tab
 - Required secret: `HOMEBREW_TAP_TOKEN` (PAT with workflow permissions)
+
+### mise ubi Distribution
+
+ofsht binaries are automatically compatible with mise's [ubi backend](https://mise.jdx.dev/dev-tools/backends/ubi.html):
+
+```bash
+mise use -g ubi:wadackel/ofsht
+```
+
+**How it works**:
+1. mise's ubi backend reads GitHub releases directly from this repository
+2. Automatically detects the user's platform (OS + CPU architecture)
+3. Downloads and extracts the appropriate binary from release assets
+4. No maintainer action or registry registration required
+
+**Requirements** (already met):
+- ✅ Asset naming follows platform conventions: `ofsht-${target}.tar.gz`
+- ✅ Archive contains single executable at root level
+- ✅ Supported platforms: Linux (x86_64 gnu/musl), macOS (x86_64/aarch64)
+
+**Important**: Asset naming is critical for mise compatibility. The release workflow (`.github/workflows/release.yaml:181-185`) generates archives in the format `ofsht-{target}.tar.gz` containing a single `ofsht` binary. Changing this format will break mise installations.
+
+**Registry decision**: We intentionally do NOT register ofsht in the [mise registry](https://mise.jdx.dev/registry.html). The ubi backend works perfectly without registration, and users can install via `ubi:wadackel/ofsht` directly. This avoids the maintenance burden of keeping a registry entry updated.
 
 ### Manual Release
 

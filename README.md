@@ -62,11 +62,40 @@ A command-line tool for managing Git worktrees with automation features.
 
 ## Installation
 
-### From crates.io (Recommended)
+### From crates.io
 
 ```bash
 cargo install ofsht
 ```
+
+### From Homebrew
+
+```bash
+brew install wadackel/tap/ofsht
+```
+
+### Using mise
+
+If you're using [mise](https://mise.jdx.dev/) for development tool management:
+
+```bash
+# Install latest version
+mise use -g ubi:wadackel/ofsht
+
+# Or install specific version
+mise install ubi:wadackel/ofsht@0.1.7
+
+# Or add to mise.toml
+[tools]
+"ubi:wadackel/ofsht" = "latest"
+```
+
+This method works via mise's ubi backend, which automatically:
+- Detects your platform and downloads the appropriate binary
+- Manages versions alongside your other development tools
+- Works without requiring ofsht to be in the mise registry
+
+**Supported platforms**: Linux (x86_64), macOS (Intel/Apple Silicon)
 
 ### From Binary Releases
 
@@ -84,12 +113,6 @@ sudo mv ofsht /usr/local/bin/
 # Linux (x86_64)
 curl -L https://github.com/wadackel/ofsht/releases/latest/download/ofsht-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv ofsht /usr/local/bin/
-```
-
-### From Homebrew
-
-```bash
-brew install wadackel/tap/ofsht
 ```
 
 ### From Source
