@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config;
+use crate::config::template_generator::TemplateContext;
 use crate::domain::worktree::display_path;
 
 /// Write config file if it doesn't exist (or force overwrite)
@@ -65,6 +66,9 @@ pub fn cmd_init(
     let generate_global = scope_global || !scope_local;
     let generate_local = scope_local || !scope_global;
 
+    // Detect tool availability
+    let ctx = TemplateContext::detect();
+
     // Generate global config
     if generate_global {
         let Some(path) = config::Config::global_config_path() else {
@@ -73,13 +77,7 @@ pub fn cmd_init(
                  Please set the HOME environment variable or XDG_CONFIG_HOME."
             );
         };
-        write_config_if_needed(
-            &path,
-            config::Config::template_global(),
-            force,
-            "Global",
-            color_mode,
-        )?;
+        write_config_if_needed(&path, &ctx.generate_global(), force, "Global", color_mode)?;
     }
 
     // Generate local config
@@ -92,7 +90,7 @@ pub fn cmd_init(
 
         write_config_if_needed(
             &config_path,
-            config::Config::template_local(),
+            &ctx.generate_local(),
             force,
             "Local",
             color_mode,

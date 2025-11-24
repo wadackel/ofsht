@@ -4,6 +4,7 @@
 
 pub mod loader;
 pub mod schema;
+pub mod template_generator;
 
 // Re-export public types and functions
 // Note: These are part of the public API and used in tests, even if not all are used in main.rs
@@ -472,21 +473,39 @@ mod tests {
 
     #[test]
     fn test_template_global_is_valid_toml() {
-        let template = Config::template_global();
-        let result: Result<Config, _> = toml::from_str(template);
+        let ctx = template_generator::TemplateContext {
+            gh_available: true,
+            zoxide_available: true,
+            fzf_available: true,
+            tmux_available: true,
+        };
+        let template = ctx.generate_global();
+        let result: Result<Config, _> = toml::from_str(&template);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_template_local_is_valid_toml() {
-        let template = Config::template_local();
-        let result: Result<Config, _> = toml::from_str(template);
+        let ctx = template_generator::TemplateContext {
+            gh_available: true,
+            zoxide_available: true,
+            fzf_available: true,
+            tmux_available: true,
+        };
+        let template = ctx.generate_local();
+        let result: Result<Config, _> = toml::from_str(&template);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_template_global_contains_all_sections() {
-        let template = Config::template_global();
+        let ctx = template_generator::TemplateContext {
+            gh_available: true,
+            zoxide_available: true,
+            fzf_available: true,
+            tmux_available: true,
+        };
+        let template = ctx.generate_global();
         assert!(template.contains("[worktree]"));
         assert!(template.contains("[hooks.create]"));
         assert!(template.contains("[hooks.delete]"));
@@ -498,8 +517,15 @@ mod tests {
 
     #[test]
     fn test_template_local_contains_all_sections() {
-        let template = Config::template_local();
-        assert!(template.contains("[worktree]"));
+        let ctx = template_generator::TemplateContext {
+            gh_available: true,
+            zoxide_available: true,
+            fzf_available: true,
+            tmux_available: true,
+        };
+        let template = ctx.generate_local();
+        // Local config should NOT contain [worktree] section
+        assert!(!template.contains("[worktree]"));
         assert!(template.contains("[hooks.create]"));
         assert!(template.contains("[hooks.delete]"));
         // Should NOT contain integration sections
@@ -511,8 +537,13 @@ mod tests {
 
     #[test]
     fn test_template_global_has_explanatory_comments() {
-        let template = Config::template_global();
-        assert!(template.contains("# Location:"));
+        let ctx = template_generator::TemplateContext {
+            gh_available: true,
+            zoxide_available: true,
+            fzf_available: true,
+            tmux_available: true,
+        };
+        let template = ctx.generate_global();
         assert!(template.contains("# Variables:"));
     }
 }
