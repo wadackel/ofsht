@@ -357,6 +357,58 @@ ofsht ls             # Normal operation (no directory change)
 
 **Testing**: Manual testing required for each shell (see docs/TEST.md). No automated tests due to shell environment dependencies.
 
+## CI/CD Workflows
+
+### Release Workflow (`.github/workflows/release.yaml`)
+
+The release workflow uses **release-plz** to automate Rust crate releases with GitHub App authentication.
+
+**Architecture**:
+1. **release-plz-pr** job: Creates/updates release PR with changelog
+2. **release-plz-release** job: Publishes release when PR is merged to main
+3. **build-binaries** job: Builds cross-platform binaries and attaches to release
+
+**Authentication**:
+- Uses GitHub App token instead of PAT for better security and control
+- Both `release-plz-pr` and `release-plz-release` jobs generate short-lived tokens via `actions/create-github-app-token`
+- Required secrets/vars:
+  - `vars.OFSHT_APP_ID`: GitHub App ID
+  - `secrets.OFSHT_APP_PRIVATE_KEY`: GitHub App private key
+  - `secrets.CARGO_REGISTRY_TOKEN`: crates.io API token
+- GitHub App permissions required:
+  - Repository permissions → Contents: Read and write
+  - Repository permissions → Pull requests: Read and write
+  - Repository permissions → Metadata: Read-only (automatic)
+
+**Critical Configuration**:
+- **Action version consistency**: Both PR and release jobs MUST use the same `release-plz/action` version (currently `v0.5.118`)
+  - Older versions (e.g., `v0.5.101`) have different Git authentication behavior and may fail
+  - The action internally handles Git credential configuration when provided with a GitHub App token
+- **Checkout settings**: Use `persist-credentials: false` for security (the action manages its own authentication)
+- **SHA pinning**: All external actions are SHA-pinned for supply chain security
+
+**Common Issues**:
+- Git authentication failures: Ensure both jobs use the same action version and GitHub App token is properly configured
+- Permission errors: Verify GitHub App has required permissions and is installed on the repository
+- Release draft not created: Check `release-plz.toml` has `git_release_enable = true` and `git_release_draft = true`
+
+**Testing CI Changes**:
+- Use `gh` CLI to inspect workflow runs: `gh run view <run-id>`
+- Check job logs: `gh run view <run-id> --job=<job-id>`
+- Verify GitHub App installation: Settings → GitHub Apps → Installed GitHub Apps
+
+### Commit Message Convention
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/):
+- `feat:` - New features
+- `fix:` - Bug fixes
+- `docs:` - Documentation changes
+- `refactor:` - Code refactoring
+- `test:` - Test additions/modifications
+- `chore:` - Maintenance tasks
+- `ci:` - CI/CD workflow changes
+- `perf:` - Performance improvements
+
 ## Language Policy
 
 ### Documentation & Code
