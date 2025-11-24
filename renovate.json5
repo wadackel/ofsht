@@ -1,0 +1,84 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  // Extend from best practices preset for hardened defaults
+  // (digest pinning, config migrations, abandonment warnings, etc.)
+  "extends": [
+    "config:best-practices",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":separateMajorReleases",
+    ":automergeDisabled",
+    // Pin GitHub Actions to immutable SHAs while preserving readable version comments
+    "helpers:pinGitHubActionDigestsToSemver",
+  ],
+
+  // Only manage Cargo and GitHub Actions dependencies
+  "enabledManagers": ["cargo", "github-actions"],
+
+  // Allow up to 10 concurrent PRs
+  "prConcurrentLimit": 10,
+
+  // Auto-close dependency dashboard when all updates are processed
+  "dependencyDashboardAutoclose": true,
+
+  // Lock file maintenance schedule (runs every Monday at 2am)
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["after 2am on monday"],
+  },
+
+  // Require timestamps for minimumReleaseAge (Renovate 42+ default)
+  "minimumReleaseAgeBehaviour": "timestamp-required",
+
+  "packageRules": [
+    // Cargo dependencies: wait 3 days after release to reduce supply-chain risk
+    // (security updates bypass this delay)
+    {
+      "matchManagers": ["cargo"],
+      "minimumReleaseAge": "3 days",
+      "prCreation": "not-pending",
+      "internalChecksFilter": "strict",
+    },
+
+    // Cargo dependencies: group patch & minor updates together
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "cargo dependencies (patch & minor)",
+      "labels": ["dependencies", "cargo"],
+    },
+
+    // Cargo dependencies: separate major updates for careful review
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "cargo", "major"],
+    },
+
+    // GitHub Actions: group official actions (actions/*)
+    {
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["/^actions//"],
+      "groupName": "github-actions (official)",
+      "labels": ["dependencies", "ci"],
+    },
+
+    // GitHub Actions: group third-party actions (non-actions/*)
+    {
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["!/^actions//"],
+      "groupName": "github-actions (third-party)",
+      "labels": ["dependencies", "ci", "third-party"],
+    },
+
+    // Security updates: high priority with immediate PR creation
+    {
+      "matchManagers": ["cargo", "github-actions"],
+      "matchDatasources": ["crate", "github-tags"],
+      "prPriority": 20,
+      "minimumReleaseAge": "0 days",
+      "addLabels": ["security"],
+    },
+  ],
+}
