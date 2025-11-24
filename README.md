@@ -36,26 +36,26 @@ A command-line tool for managing Git worktrees with automation features.
 
 ## Features
 
-**Worktree Management**
+🌳 **Worktree Management**
 - Create worktrees from branches, tags, or commits
 - List all worktrees with status information
 - Navigate to worktrees by branch name
 - Remove worktrees with automatic branch cleanup
 - Interactive worktree selection with fzf integration
 
-**Automation & Hooks**
+⚙️ **Automation & Hooks**
 - Run commands after worktree creation (e.g., `npm install`)
 - Copy files from main repository (e.g., `.env`, `.nvmrc`)
 - Create symlinks for shared directories (e.g., `.vscode`)
 - Execute cleanup commands before worktree deletion
 - Customize worktree paths with `{repo}` and `{branch}` variables
 
-**Shell Integration**
+💻 **Shell Integration**
 - Automatic directory changing for `add` and `cd` commands
 - Shell completion for Bash, Zsh, and Fish
 - Automatic zoxide integration for quick navigation
 
-**Configuration**
+📝 **Configuration**
 - Local configuration (`.ofsht.toml` in project root)
 - Global configuration (`~/.config/ofsht/config.toml`)
 - XDG Base Directory specification support
