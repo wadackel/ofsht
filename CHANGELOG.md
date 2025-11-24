@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2025-11-24
+
+### CI/CD
+
+- Fix workflow run detection in Homebrew tap update job ([#20](https://github.com/wadackel/ofsht/pull/20))
+
+
 ## [0.1.9] - 2025-11-24
 
 ### CI/CD
