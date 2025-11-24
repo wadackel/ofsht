@@ -301,7 +301,8 @@ jobs:
 
           TAG="${{ needs.release-plz-release.outputs.tag_name }}"
           REPO="wadackel/homebrew-tap"
-          WORKFLOW_START_TIME="${{ github.event.repository.pushed_at }}"
+          # Record current time for filtering workflow runs
+          DISPATCH_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           echo "Triggering Homebrew tap update for version $TAG..."
 
@@ -315,20 +316,31 @@ jobs:
 
           echo "Workflow dispatch sent successfully"
 
-          # Wait for the workflow run to appear (gh workflow run doesn't return run ID)
-          echo "Waiting for workflow run to start..."
-          sleep 10
+          # Wait for the workflow run to appear and retry (gh workflow run doesn't return run ID)
+          # GitHub API may take time to propagate the new workflow run
+          MAX_RETRIES=6  # 60 seconds total
+          RETRY_COUNT=0
+          RUN_ID=""
 
-          # Find the most recent run for this workflow (filter by workflow start time)
-          RUN_ID=$(gh run list \
-            --repo "$REPO" \
-            --workflow update.yaml \
-            --limit 5 \
-            --json databaseId,createdAt \
-            --jq --arg start_time "$WORKFLOW_START_TIME" \
-              'map(select(.createdAt >= $start_time)) | .[0].databaseId')
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            RUN_ID=$(gh run list \
+              --repo "$REPO" \
+              --workflow update.yaml \
+              --created ">$DISPATCH_TIME" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')
 
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            if [ -n "$RUN_ID" ]; then
+              break
+            fi
+
+            echo "Waiting for workflow run to appear... (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+            sleep 10
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+          done
+
+          if [ -z "$RUN_ID" ]; then
             echo "::warning::Could not find workflow run, skipping verification"
             echo "Check manually at: https://github.com/$REPO/actions/workflows/update.yaml"
             exit 0
