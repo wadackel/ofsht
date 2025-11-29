@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11] - 2025-11-29
+
+### CI/CD
+
+- Migrate to crates.io Trusted Publishing (OIDC) ([#27](https://github.com/wadackel/ofsht/pull/27))
+
+
+### Miscellaneous
+
+- Migrate Renovate config to JSON5 format with enhanced security ([#22](https://github.com/wadackel/ofsht/pull/22))
+
+
 ## [0.1.10] - 2025-11-24
 
 ### CI/CD
