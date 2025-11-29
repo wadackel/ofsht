@@ -553,7 +553,11 @@ The Homebrew tap (`wadackel/homebrew-tap`) is automatically updated on each rele
 - If the tap update fails, check the [tap repository actions](https://github.com/wadackel/homebrew-tap/actions)
 - The main release will still succeed even if tap update fails
 - Tap updates can be triggered manually via the tap repository's Actions tab
-- Required secret: `HOMEBREW_TAP_TOKEN` (PAT with workflow permissions)
+- Required secrets/variables:
+  - `OFSHT_APP_ID` (variable): GitHub App ID for tap repository access
+  - `OFSHT_APP_PRIVATE_KEY` (secret): GitHub App private key
+  - GitHub App must be installed on both `ofsht` and `homebrew-tap` repositories
+  - GitHub App permissions required: actions (read/write), contents (read)
 
 ### mise ubi Distribution
 
