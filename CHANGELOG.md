@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2025-11-29
+
+### Dependencies
+
+- Update github-actions (official) (major) ([#28](https://github.com/wadackel/ofsht/pull/28))
+
+- Update dependency ubuntu to v24 ([#29](https://github.com/wadackel/ofsht/pull/29))
+
+- Update github-actions (third-party) ([#25](https://github.com/wadackel/ofsht/pull/25))
+
+- Update actions/upload-artifact action to v4.6.2 ([#24](https://github.com/wadackel/ofsht/pull/24))
+
+
+### Documentation
+
+- Update Homebrew tap authentication documentation ([#30](https://github.com/wadackel/ofsht/pull/30))
+
+
 ## [0.1.11] - 2025-11-29
 
 ### CI/CD
