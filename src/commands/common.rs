@@ -74,6 +74,39 @@ pub fn find_worktree_by_branch(output: &str, branch_name: &str) -> Option<String
     None
 }
 
+/// Find worktree path by absolute path
+///
+/// Uses canonicalization to match paths even when:
+/// - Input path is relative
+/// - Paths contain symlinks, `.` or `..` components
+///
+/// Returns None if path not found or is main worktree
+pub fn find_worktree_by_path(output: &str, target_path: &Path) -> Option<String> {
+    let mut worktree_index = 0;
+
+    for line in output.lines() {
+        if line.starts_with("worktree ") {
+            let current_path = line.strip_prefix("worktree ").map(String::from);
+            worktree_index += 1;
+
+            // Skip main worktree (index 1)
+            if worktree_index > 1 {
+                if let Some(path) = &current_path {
+                    let path_buf = PathBuf::from(path);
+                    let canonical_target = canonicalize_allow_missing(target_path);
+                    let canonical_worktree = canonicalize_allow_missing(&path_buf);
+
+                    if canonical_target == canonical_worktree {
+                        return current_path;
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Check if the given path or branch name refers to the main worktree
 /// This function is only used in tests
 #[cfg(test)]
