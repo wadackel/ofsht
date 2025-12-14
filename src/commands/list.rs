@@ -8,8 +8,8 @@ use std::process::Command;
 
 use crate::color;
 use crate::domain::worktree::{
-    display_path, format_worktree_table, get_last_commit_time, parse_simple_worktree_entries,
-    parse_worktree_entries,
+    format_worktree_table, get_last_commit_time, normalize_absolute_path,
+    parse_simple_worktree_entries, parse_worktree_entries,
 };
 
 /// List all worktrees
@@ -83,8 +83,8 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
                     // Output branch name (actionable by cd and rm)
                     println!("{branch}");
                 } else {
-                    // Detached HEAD: output normalized path to make it actionable by cd and rm
-                    println!("{}", display_path(&PathBuf::from(&entry.path)));
+                    // Detached HEAD: output normalized absolute path to make it actionable by cd and rm
+                    println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
                 }
             }
         }

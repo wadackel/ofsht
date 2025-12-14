@@ -6,7 +6,7 @@ use std::process::Command;
 use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config;
-use crate::domain::worktree::display_path;
+use crate::domain::worktree::normalize_absolute_path;
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::gh::GhClient;
@@ -345,8 +345,8 @@ pub fn cmd_new(
         // Don't print path to stdout when using tmux
         // (prevents shell integration from cd'ing in the calling shell)
     } else {
-        // Print normalized path to STDOUT for shell wrapper integration
-        println!("{}", display_path(&worktree_path));
+        // Print normalized absolute path to STDOUT for shell wrapper integration
+        println!("{}", normalize_absolute_path(&worktree_path));
     }
 
     Ok(())

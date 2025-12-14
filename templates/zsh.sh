@@ -12,7 +12,9 @@ ofsht() {
     if [[ "$1" == "cd" ]] || [[ "$1" == "add" ]] || [[ "$1" == "rm" ]]; then
         local result
         result=$(command ofsht "$@") || return $?
-        [[ -n "$result" ]] && cd -- "$result"
+        if [[ -n "$result" ]]; then
+            cd -- "$result" || return $?
+        fi
     else
         # Pass through all other subcommands
         command ofsht "$@"
