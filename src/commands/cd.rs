@@ -6,7 +6,7 @@ use std::process::Command;
 
 use crate::commands::common::{get_main_repo_root, parse_all_worktrees};
 use crate::config;
-use crate::domain::worktree::display_path;
+use crate::domain::worktree::normalize_absolute_path;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
 
@@ -60,14 +60,14 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
             return Ok(());
         }
 
-        println!("{}", display_path(&PathBuf::from(&selected[0])));
+        println!("{}", normalize_absolute_path(&PathBuf::from(&selected[0])));
         return Ok(());
     };
 
     // Special handling for "@" (main worktree)
     if name == "@" {
         let (main_path, _) = parse_all_worktrees(&stdout);
-        println!("{}", display_path(&PathBuf::from(&main_path)));
+        println!("{}", normalize_absolute_path(&PathBuf::from(&main_path)));
         return Ok(());
     }
 
@@ -85,7 +85,7 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
             // Check if this is the branch we're looking for
             if branch == name {
                 if let Some(path) = current_path {
-                    println!("{}", display_path(&PathBuf::from(path)));
+                    println!("{}", normalize_absolute_path(&PathBuf::from(path)));
                     return Ok(());
                 }
             }

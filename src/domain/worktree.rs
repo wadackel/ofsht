@@ -7,6 +7,7 @@ use chrono_humanize::{Accuracy, HumanTime, Tense};
 use std::process::Command;
 
 use crate::color;
+use crate::commands::common::canonicalize_allow_missing;
 
 /// Simple worktree entry without hash information
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +241,38 @@ pub fn display_path(path: &std::path::Path) -> String {
     normalized.display().to_string()
 }
 
+/// Normalize path to absolute form without tilde conversion
+///
+/// Resolves `.` and `..` components lexically.
+/// Use this for programmatic output (stdout) where absolute paths are needed.
+/// For human-friendly display, use `display_path()` instead.
+///
+/// If the input path is relative, it will be converted to an absolute path
+/// first using `canonicalize_allow_missing`, which works even if the path
+/// doesn't exist on the filesystem.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use ofsht::domain::worktree::normalize_absolute_path;
+///
+/// let path = Path::new("/Users/test/ofsht/../ofsht-worktrees/feature");
+/// assert_eq!(
+///     normalize_absolute_path(path),
+///     "/Users/test/ofsht-worktrees/feature"
+/// );
+/// ```
+#[must_use]
+pub fn normalize_absolute_path(path: &std::path::Path) -> String {
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        canonicalize_allow_missing(path)
+    };
+    normalize_path_lexically(&abs_path).display().to_string()
+}
+
 /// Format worktree entries as a table with aligned columns
 ///
 /// Returns formatted lines ready for display
@@ -431,5 +464,102 @@ mod tests {
         };
         let result = display_path(&path);
         assert!(!result.starts_with('~'));
+    }
+
+    #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn test_normalize_absolute_path_resolves_parent_dirs() {
+        // Test that .. components are resolved
+        use std::path::MAIN_SEPARATOR;
+        let path = if cfg!(windows) {
+            PathBuf::from(format!(
+                "C:{MAIN_SEPARATOR}Users{MAIN_SEPARATOR}test{MAIN_SEPARATOR}ofsht{MAIN_SEPARATOR}..{MAIN_SEPARATOR}ofsht-worktrees{MAIN_SEPARATOR}feature"
+            ))
+        } else {
+            PathBuf::from("/Users/test/ofsht/../ofsht-worktrees/feature")
+        };
+        let result = normalize_absolute_path(&path);
+        let expected = if cfg!(windows) {
+            format!("C:{MAIN_SEPARATOR}Users{MAIN_SEPARATOR}test{MAIN_SEPARATOR}ofsht-worktrees{MAIN_SEPARATOR}feature")
+        } else {
+            "/Users/test/ofsht-worktrees/feature".to_string()
+        };
+        assert_eq!(result, expected);
+        assert!(!result.contains(".."));
+    }
+
+    #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn test_normalize_absolute_path_removes_current_dirs() {
+        // Test that . components are removed
+        use std::path::MAIN_SEPARATOR;
+        let path = if cfg!(windows) {
+            PathBuf::from(format!(
+                "C:{MAIN_SEPARATOR}Users{MAIN_SEPARATOR}.{MAIN_SEPARATOR}test{MAIN_SEPARATOR}.{MAIN_SEPARATOR}feature"
+            ))
+        } else {
+            PathBuf::from("/Users/./test/./feature")
+        };
+        let result = normalize_absolute_path(&path);
+        let expected = if cfg!(windows) {
+            format!("C:{MAIN_SEPARATOR}Users{MAIN_SEPARATOR}test{MAIN_SEPARATOR}feature")
+        } else {
+            "/Users/test/feature".to_string()
+        };
+        assert_eq!(result, expected);
+        // Check that . is removed (but be careful as it might appear in extensions)
+        assert!(!result.split(MAIN_SEPARATOR).any(|x| x == "."));
+    }
+
+    #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn test_normalize_absolute_path_outside_home() {
+        // Test paths outside home directory (no tilde conversion)
+        use std::path::MAIN_SEPARATOR;
+        let path = if cfg!(windows) {
+            PathBuf::from(format!("C:{MAIN_SEPARATOR}temp{MAIN_SEPARATOR}worktree"))
+        } else {
+            PathBuf::from("/tmp/worktree")
+        };
+        let result = normalize_absolute_path(&path);
+        assert!(!result.starts_with('~'));
+        // Verify path structure is preserved
+        assert!(result.contains("worktree"));
+    }
+
+    #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn test_normalize_absolute_path_consistency_with_display_path() {
+        // Test that normalization is consistent between the two functions
+        use std::path::MAIN_SEPARATOR;
+        let path = if cfg!(windows) {
+            PathBuf::from(format!(
+                "C:{MAIN_SEPARATOR}Users{MAIN_SEPARATOR}test{MAIN_SEPARATOR}ofsht{MAIN_SEPARATOR}..{MAIN_SEPARATOR}worktrees{MAIN_SEPARATOR}.{MAIN_SEPARATOR}feature{MAIN_SEPARATOR}.."
+            ))
+        } else {
+            PathBuf::from("/Users/test/ofsht/../worktrees/./feature/..")
+        };
+        let normalized_abs = normalize_absolute_path(&path);
+        let displayed = display_path(&path);
+
+        // Both should normalize the same way (only difference is tilde conversion)
+        assert!(!normalized_abs.contains(".."));
+        assert!(!normalized_abs.split(MAIN_SEPARATOR).any(|x| x == "."));
+        assert!(!displayed.contains(".."));
+
+        // Absolute result should not have tilde
+        assert!(!normalized_abs.starts_with('~'));
+    }
+
+    #[test]
+    fn test_normalize_absolute_path_handles_relative_paths() {
+        // Test that relative paths are safely converted to absolute paths
+        let relative = PathBuf::from("worktrees/feature");
+        let result = normalize_absolute_path(&relative);
+
+        // Should be converted to absolute path (works on both Unix and Windows)
+        assert!(PathBuf::from(&result).is_absolute());
+        assert!(result.contains("worktrees"));
+        assert!(result.contains("feature"));
     }
 }
