@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::color;
+use crate::commands::common::get_main_repo_root;
+use crate::config::Config;
 use crate::domain::worktree::{
     format_worktree_table, get_last_commit_time, normalize_absolute_path,
     parse_simple_worktree_entries, parse_worktree_entries,
@@ -35,6 +37,11 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
     // Get current directory for active worktree detection
     let current_dir = std::env::current_dir().ok();
 
+    // Load config from main repository root
+    let config = get_main_repo_root()
+        .ok()
+        .and_then(|repo_root| Config::load_from_repo_root(&repo_root).ok());
+
     // Determine stream/format based ONLY on TTY status
     // Color mode only affects ANSI emission, not which stream or format
     let is_interactive = std::io::stdout().is_terminal();
@@ -50,7 +57,13 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
             .collect();
 
         // Format and print table to stderr (color_mode controls ANSI emission)
-        let lines = format_worktree_table(&entries, &commit_times, show_path, color_mode);
+        let lines = format_worktree_table(
+            &entries,
+            &commit_times,
+            show_path,
+            color_mode,
+            config.as_ref(),
+        );
         for line in lines {
             eprintln!("{line}");
         }
@@ -67,7 +80,13 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
 
             // Format and print table to stdout
             // color_mode determines whether ANSI codes are included
-            let lines = format_worktree_table(&entries, &commit_times, show_path, color_mode);
+            let lines = format_worktree_table(
+                &entries,
+                &commit_times,
+                show_path,
+                color_mode,
+                config.as_ref(),
+            );
             for line in lines {
                 println!("{line}");
             }

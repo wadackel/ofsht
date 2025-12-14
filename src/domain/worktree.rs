@@ -29,6 +29,7 @@ pub struct WorktreeEntry {
 struct WorktreeDisplay {
     path: Option<String>,
     hash: String,
+    rel_path: Option<String>,
     branch: String,
     timestamp: String,
     is_active: bool,
@@ -273,20 +274,179 @@ pub fn normalize_absolute_path(path: &std::path::Path) -> String {
     normalize_path_lexically(&abs_path).display().to_string()
 }
 
+/// Calculate the depth from {branch} placeholder to the worktree root
+///
+/// Returns the number of directory levels from the worktree root to where {branch} is located.
+/// This is determined by counting normal path components before {branch}.
+/// Uses `Path::components()` for cross-platform compatibility (handles both `/` and `\`).
+///
+/// # Examples
+///
+/// ```
+/// # use ofsht::domain::worktree::calculate_branch_depth;
+/// assert_eq!(calculate_branch_depth("../{repo}-worktrees/{branch}"), 1);
+/// assert_eq!(calculate_branch_depth("../{repo}-worktrees/subdir/{branch}"), 2);
+/// ```
+#[must_use]
+#[allow(dead_code)] // Used in doctests
+pub fn calculate_branch_depth(template: &str) -> usize {
+    use std::path::{Component, Path};
+
+    // Get the part before {branch}
+    let before_branch = template.split("{branch}").next().unwrap_or("");
+
+    // Use Path::components() for cross-platform path parsing
+    // This automatically handles both '/' and '\' separators
+    // Count only Normal components (excludes '..' and '.')
+    Path::new(before_branch)
+        .components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .count()
+}
+
+/// Calculate the worktree root directory from a worktree path and template
+///
+/// Uses the template to determine how many levels to traverse upward
+/// from the worktree path to find the root directory.
+///
+/// Returns None if the path doesn't have enough parent directories.
+///
+/// **Note**: This function assumes the branch name is a single directory component.
+/// For nested branch names (e.g., `docs/tweak`), use `calculate_worktree_root_from_paths` instead.
+///
+/// # Examples
+///
+/// ```
+/// # use std::path::PathBuf;
+/// # use ofsht::domain::worktree::calculate_worktree_root;
+/// let path = PathBuf::from("/Users/test/repo-worktrees/feature");
+/// let root = calculate_worktree_root(&path, "../{repo}-worktrees/{branch}");
+/// assert_eq!(root, Some(PathBuf::from("/Users/test/repo-worktrees")));
+/// ```
+#[must_use]
+#[allow(dead_code)] // Used in doctests
+pub fn calculate_worktree_root(
+    worktree_path: &std::path::Path,
+    template: &str,
+) -> Option<std::path::PathBuf> {
+    let depth = calculate_branch_depth(template);
+    let mut root = worktree_path;
+    for _ in 0..depth {
+        root = root.parent()?;
+    }
+    Some(root.to_path_buf())
+}
+
+/// Calculate the worktree root directory from all non-main worktree paths
+///
+/// Finds the common parent directory that contains all worktrees.
+/// This method correctly handles nested branch names (e.g., `docs/tweak`, `team/alice/fix`).
+///
+/// Returns None if:
+/// - No worktree paths are provided
+/// - Paths have no common parent
+///
+/// # Examples
+///
+/// ```
+/// # use std::path::PathBuf;
+/// # use ofsht::domain::worktree::calculate_worktree_root_from_paths;
+/// let paths = vec![
+///     PathBuf::from("/Users/test/repo-worktrees/feature"),
+///     PathBuf::from("/Users/test/repo-worktrees/docs/tweak"),
+/// ];
+/// let root = calculate_worktree_root_from_paths(&paths);
+/// assert_eq!(root, Some(PathBuf::from("/Users/test/repo-worktrees")));
+/// ```
+#[must_use]
+pub fn calculate_worktree_root_from_paths(
+    worktree_paths: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    use std::path::{Component, PathBuf};
+
+    if worktree_paths.is_empty() {
+        return None;
+    }
+
+    if worktree_paths.len() == 1 {
+        // Only one worktree - return its parent as the root
+        return worktree_paths[0].parent().map(std::path::Path::to_path_buf);
+    }
+
+    // Find common prefix by comparing path components
+    let first_components: Vec<Component> = worktree_paths[0].components().collect();
+    let mut common_depth = first_components.len();
+
+    // Compare with all other paths to find the shortest common prefix
+    for path in &worktree_paths[1..] {
+        let components: Vec<Component> = path.components().collect();
+        let mut current_depth = 0;
+
+        for (comp_first, comp_other) in first_components.iter().zip(components.iter()) {
+            if comp_first == comp_other {
+                current_depth += 1;
+            } else {
+                break;
+            }
+        }
+
+        common_depth = common_depth.min(current_depth);
+    }
+
+    if common_depth == 0 {
+        return None;
+    }
+
+    // Build the common prefix path
+    let mut result = PathBuf::new();
+    for component in first_components.iter().take(common_depth) {
+        result.push(component);
+    }
+
+    Some(result)
+}
+
+/// Calculate the relative path from worktree root to the worktree
+///
+/// Returns None if the worktree path is not under the worktree root.
+///
+/// # Examples
+///
+/// ```
+/// # use std::path::PathBuf;
+/// # use ofsht::domain::worktree::calculate_relative_path;
+/// let worktree = PathBuf::from("/Users/test/repo-worktrees/feature");
+/// let root = PathBuf::from("/Users/test/repo-worktrees");
+/// assert_eq!(calculate_relative_path(&worktree, &root), Some("feature".to_string()));
+/// ```
+#[must_use]
+pub fn calculate_relative_path(
+    worktree_path: &std::path::Path,
+    worktree_root: &std::path::Path,
+) -> Option<String> {
+    worktree_path
+        .strip_prefix(worktree_root)
+        .ok()
+        .map(|p| p.display().to_string())
+}
+
 /// Format worktree entries as a table with aligned columns
 ///
 /// Returns formatted lines ready for display
-/// If `show_path` is false: hash • branch • time
-/// If `show_path` is true: path • hash • branch • time
+/// If `show_path` is false and `config` is None: hash • branch • time
+/// If `show_path` is false and `config` is Some: hash • `rel_path` • branch • time
+/// If `show_path` is true: path • hash • `rel_path` • branch • time
 ///
 /// # Panics
 /// Panics if entries and `commit_times` have different lengths
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn format_worktree_table(
     entries: &[WorktreeEntry],
     commit_times: &[Option<DateTime<Utc>>],
     show_path: bool,
     color_mode: color::ColorMode,
+    config: Option<&crate::config::Config>,
 ) -> Vec<String> {
     assert_eq!(
         entries.len(),
@@ -297,6 +457,18 @@ pub fn format_worktree_table(
     let now = Utc::now();
     let mut displays: Vec<WorktreeDisplay> = Vec::new();
 
+    // Calculate worktree root if config is provided
+    // Collect all non-main worktree paths (skip index 0 which is main worktree)
+    let worktree_root = config.and_then(|_cfg| {
+        let non_main_paths: Vec<std::path::PathBuf> = entries
+            .iter()
+            .skip(1)
+            .map(|entry| std::path::PathBuf::from(&entry.path))
+            .collect();
+
+        calculate_worktree_root_from_paths(&non_main_paths)
+    });
+
     // Build display data
     for (index, (entry, commit_time)) in entries.iter().zip(commit_times.iter()).enumerate() {
         let path = if show_path {
@@ -305,6 +477,16 @@ pub fn format_worktree_table(
             None
         };
         let hash = entry.hash.clone();
+
+        // Calculate relative path for non-main worktrees
+        let rel_path = if index != 0 {
+            worktree_root.as_ref().and_then(|root| {
+                calculate_relative_path(&std::path::PathBuf::from(&entry.path), root)
+            })
+        } else {
+            None
+        };
+
         // Main worktree (index 0) is always displayed as "@"
         let branch = if index == 0 {
             "[@]".to_string()
@@ -325,6 +507,7 @@ pub fn format_worktree_table(
         displays.push(WorktreeDisplay {
             path,
             hash,
+            rel_path,
             branch,
             timestamp,
             is_active: entry.is_active,
@@ -342,6 +525,11 @@ pub fn format_worktree_table(
         0
     };
     let max_hash_width = displays.iter().map(|d| d.hash.len()).max().unwrap_or(0);
+    let max_rel_path_width = displays
+        .iter()
+        .filter_map(|d| d.rel_path.as_ref().map(std::string::String::len))
+        .max()
+        .unwrap_or(0);
     let max_branch_width = displays.iter().map(|d| d.branch.len()).max().unwrap_or(0);
 
     // Format lines with padding and colors
@@ -377,8 +565,22 @@ pub fn format_worktree_table(
                 let colored_path = d.path.as_ref().unwrap();
                 let path_padding =
                     " ".repeat(max_path_width.saturating_sub(colored_path.len()));
-                format!("{marker} {colored_path}{path_padding}  {}{hash_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
+
+                // Format relative path with padding
+                let rel_path_str = d.rel_path.as_deref().unwrap_or("");
+                let rel_path_padding =
+                    " ".repeat(max_rel_path_width.saturating_sub(rel_path_str.len()));
+
+                format!("{marker} {colored_path}{path_padding}  {}{hash_padding}  {rel_path_str}{rel_path_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
+            } else if max_rel_path_width > 0 {
+                // Show relative path column when config is provided
+                let rel_path_str = d.rel_path.as_deref().unwrap_or("");
+                let rel_path_padding =
+                    " ".repeat(max_rel_path_width.saturating_sub(rel_path_str.len()));
+
+                format!("{marker} {}{hash_padding}  {rel_path_str}{rel_path_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
             } else {
+                // Original format without relative path
                 format!("{marker} {}{hash_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
             }
         })
@@ -561,5 +763,89 @@ mod tests {
         assert!(PathBuf::from(&result).is_absolute());
         assert!(result.contains("worktrees"));
         assert!(result.contains("feature"));
+    }
+
+    // --- Tests for relative path calculation utilities ---
+
+    #[test]
+    fn test_calculate_branch_depth_simple() {
+        assert_eq!(calculate_branch_depth("../{repo}-worktrees/{branch}"), 1);
+    }
+
+    #[test]
+    fn test_calculate_branch_depth_nested() {
+        assert_eq!(
+            calculate_branch_depth("../{repo}-worktrees/subdir/{branch}"),
+            2
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_calculate_branch_depth_windows_separator() {
+        // Test with Windows-style backslash separator
+        assert_eq!(calculate_branch_depth(r"..\{repo}-worktrees\{branch}"), 1);
+        assert_eq!(
+            calculate_branch_depth(r"..\{repo}-worktrees\subdir\{branch}"),
+            2
+        );
+    }
+
+    #[test]
+    fn test_calculate_branch_depth_mixed_separators() {
+        // Path::components() normalizes mixed separators
+        assert_eq!(calculate_branch_depth("../{repo}-worktrees\\{branch}"), 1);
+    }
+
+    #[test]
+    fn test_calculate_worktree_root_from_feature_branch() {
+        let path = PathBuf::from("/Users/test/repo-worktrees/feature");
+        let root = calculate_worktree_root(&path, "../{repo}-worktrees/{branch}");
+        assert_eq!(root, Some(PathBuf::from("/Users/test/repo-worktrees")));
+    }
+
+    #[test]
+    fn test_calculate_worktree_root_insufficient_depth() {
+        // Path has no parent (root path)
+        let path = PathBuf::from("/");
+        let root = calculate_worktree_root(&path, "../{repo}-worktrees/{branch}");
+        assert_eq!(root, None);
+    }
+
+    #[test]
+    fn test_calculate_relative_path_simple() {
+        let worktree = PathBuf::from("/Users/test/repo-worktrees/feature");
+        let root = PathBuf::from("/Users/test/repo-worktrees");
+        assert_eq!(
+            calculate_relative_path(&worktree, &root),
+            Some("feature".to_string())
+        );
+    }
+
+    #[test]
+    fn test_calculate_relative_path_nested() {
+        let worktree = PathBuf::from("/Users/test/repo-worktrees/docs/tweak");
+        let root = PathBuf::from("/Users/test/repo-worktrees");
+        assert_eq!(
+            calculate_relative_path(&worktree, &root),
+            Some("docs/tweak".to_string())
+        );
+    }
+
+    #[test]
+    fn test_calculate_relative_path_outside_root() {
+        let worktree = PathBuf::from("/tmp/elsewhere");
+        let root = PathBuf::from("/Users/test/repo-worktrees");
+        assert_eq!(calculate_relative_path(&worktree, &root), None);
+    }
+
+    #[test]
+    fn test_calculate_relative_path_deeply_nested() {
+        let worktree = PathBuf::from("/Users/test/repo-worktrees/team/alice/fix");
+        let root = PathBuf::from("/Users/test/repo-worktrees");
+        assert_eq!(
+            calculate_relative_path(&worktree, &root),
+            Some("team/alice/fix".to_string())
+        );
     }
 }

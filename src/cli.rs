@@ -4,7 +4,9 @@ use clap::CommandFactory;
 
 use clap::{Parser, Subcommand};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
+use std::collections::HashSet;
 use std::ffi::OsStr;
+use std::path::PathBuf;
 use std::process::Command;
 
 /// Git worktree management tool
@@ -210,22 +212,56 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
     let prefix = current.to_string_lossy();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    let mut candidates = Vec::new();
+    // Use HashSet to deduplicate branch names and relative paths
+    let mut candidates_set = HashSet::new();
 
-    // Always include "@" as the first candidate if it matches the prefix
+    // Always include "@" if it matches the prefix
     if "@".starts_with(&*prefix) {
-        candidates.push(CompletionCandidate::new("@"));
+        candidates_set.insert("@".to_string());
     }
 
-    // Add other worktrees (excluding main)
-    candidates.extend(
-        parse_worktree_list(&stdout)
-            .into_iter()
-            .filter(|name| name.starts_with(&*prefix))
-            .map(CompletionCandidate::new),
-    );
+    // Add branch names (existing behavior)
+    for branch in parse_worktree_list(&stdout) {
+        candidates_set.insert(branch);
+    }
 
-    candidates
+    // Try to add relative paths (new behavior)
+    if let Ok(repo_root) = crate::commands::common::get_main_repo_root() {
+        if crate::config::Config::load_from_repo_root(&repo_root).is_ok() {
+            // Parse worktrees to get paths
+            let entries = crate::domain::worktree::parse_worktree_entries(&stdout, None);
+
+            // Collect all non-main worktree paths (skip index 0 which is main)
+            let worktree_paths: Vec<PathBuf> = entries
+                .iter()
+                .skip(1)
+                .map(|entry| PathBuf::from(&entry.path))
+                .collect();
+
+            // Calculate worktree root from all non-main worktrees
+            if let Some(worktree_root) =
+                crate::domain::worktree::calculate_worktree_root_from_paths(&worktree_paths)
+            {
+                // Add relative paths for all non-main worktrees
+                for entry in entries.iter().skip(1) {
+                    let worktree_path = PathBuf::from(&entry.path);
+                    if let Some(rel_path) = crate::domain::worktree::calculate_relative_path(
+                        &worktree_path,
+                        &worktree_root,
+                    ) {
+                        candidates_set.insert(rel_path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Filter by prefix and convert to CompletionCandidate
+    candidates_set
+        .into_iter()
+        .filter(|name| name.starts_with(&*prefix))
+        .map(CompletionCandidate::new)
+        .collect()
 }
 
 /// Parse git worktree list --porcelain output and extract branch names
