@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-12-14
+
+### Added
+
+- Add relative path support for ls/cd/completion ([#38](https://github.com/wadackel/ofsht/pull/38))
+
+
+### Dependencies
+
+- Update github-actions (official) (major) ([#36](https://github.com/wadackel/ofsht/pull/36))
+
+- Update release-plz/action action to v0.5.120 ([#34](https://github.com/wadackel/ofsht/pull/34))
+
+- Update github-actions (official) ([#32](https://github.com/wadackel/ofsht/pull/32))
+
+- Update github-actions (official) (major) ([#28](https://github.com/wadackel/ofsht/pull/28))
+
+- Update dependency ubuntu to v24 ([#29](https://github.com/wadackel/ofsht/pull/29))
+
+- Update github-actions (third-party) ([#25](https://github.com/wadackel/ofsht/pull/25))
+
+- Update actions/upload-artifact action to v4.6.2 ([#24](https://github.com/wadackel/ofsht/pull/24))
+
+
+### Documentation
+
+- Update quick-start demo animation ([#39](https://github.com/wadackel/ofsht/pull/39))
+
+- Update Homebrew tap authentication documentation ([#30](https://github.com/wadackel/ofsht/pull/30))
+
+
+### Fixed
+
+- Resolve tilde path expansion issue in shell integration ([#37](https://github.com/wadackel/ofsht/pull/37))
+
+
 ## [0.1.11] - 2025-11-29
 
 ### CI/CD
