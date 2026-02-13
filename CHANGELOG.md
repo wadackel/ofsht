@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-13
+
+### Dependencies
+
+- Update github-actions (official) ([#41](https://github.com/wadackel/ofsht/pull/41))
+
+- Update github-actions (third-party) ([#42](https://github.com/wadackel/ofsht/pull/42))
+
+
 ## [0.2.0] - 2025-12-14
 
 ### Added
