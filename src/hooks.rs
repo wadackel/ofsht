@@ -1,7 +1,7 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::literal_string_with_formatting_args)]
 use anyhow::{Context, Result};
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -82,8 +82,10 @@ fn expand_pattern(pattern: &str, base: &Path) -> Result<(PatternKind, Vec<PathBu
             }
         }
         PatternKind::Glob => {
-            let glob =
-                Glob::new(pattern).with_context(|| format!("Invalid glob pattern: {pattern}"))?;
+            let glob = GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .with_context(|| format!("Invalid glob pattern: {pattern}"))?;
             let mut builder = GlobSetBuilder::new();
             builder.add(glob);
             let globset = builder.build()?;
@@ -672,6 +674,101 @@ mod tests {
         // Verify files were copied
         assert!(dst_dir.join("test1.json").exists());
         assert!(dst_dir.join("test2.json").exists());
+
+        std::fs::remove_dir_all(&src_dir).ok();
+        std::fs::remove_dir_all(&dst_dir).ok();
+    }
+
+    #[test]
+    fn test_expand_pattern_glob_star_does_not_cross_path_separator() {
+        let temp_dir = std::env::temp_dir().join("test_glob_no_cross_sep");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create directory structure: .claude/wadackel-a/SKILL.md, .claude/wadackel-b/SKILL.md
+        let dir_a = temp_dir.join(".claude").join("wadackel-a");
+        let dir_b = temp_dir.join(".claude").join("wadackel-b");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+        std::fs::write(dir_a.join("SKILL.md"), "skill a").unwrap();
+        std::fs::write(dir_b.join("SKILL.md"), "skill b").unwrap();
+
+        let (kind, paths) = expand_pattern(".claude/wadackel-*", &temp_dir).unwrap();
+        assert_eq!(kind, PatternKind::Glob);
+        // Should match only the two directories, not the nested SKILL.md files
+        assert_eq!(paths.len(), 2);
+        let path_strs: Vec<_> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert!(path_strs.iter().any(|s| s.ends_with("wadackel-a")));
+        assert!(path_strs.iter().any(|s| s.ends_with("wadackel-b")));
+        // Must NOT include nested files
+        assert!(!path_strs.iter().any(|s| s.ends_with("SKILL.md")));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_expand_pattern_glob_double_star_matches_recursively() {
+        let temp_dir = std::env::temp_dir().join("test_glob_double_star");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create: config/a.json, config/sub/b.json
+        let config_dir = temp_dir.join("config");
+        let sub_dir = config_dir.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(config_dir.join("a.json"), "{}").unwrap();
+        std::fs::write(sub_dir.join("b.json"), "{}").unwrap();
+
+        let (kind, paths) = expand_pattern("config/**/*.json", &temp_dir).unwrap();
+        assert_eq!(kind, PatternKind::Glob);
+        // Both files should match via ** recursive glob
+        assert_eq!(paths.len(), 2);
+        let path_strs: Vec<_> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert!(path_strs.iter().any(|s| s.ends_with("a.json")));
+        assert!(path_strs.iter().any(|s| s.ends_with("b.json")));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_create_symlinks_glob_directory_with_nested_files() {
+        let src_dir = std::env::temp_dir().join("test_symlink_glob_src");
+        let dst_dir = std::env::temp_dir().join("test_symlink_glob_dst");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+
+        // Create: skills/skill-a/SKILL.md, skills/skill-b/SKILL.md
+        let skill_a = src_dir.join("skills").join("skill-a");
+        let skill_b = src_dir.join("skills").join("skill-b");
+        std::fs::create_dir_all(&skill_a).unwrap();
+        std::fs::create_dir_all(&skill_b).unwrap();
+        std::fs::write(skill_a.join("SKILL.md"), "skill a").unwrap();
+        std::fs::write(skill_b.join("SKILL.md"), "skill b").unwrap();
+
+        // Should succeed without EEXIST errors - only directories are symlinked
+        let result = create_symlinks(
+            "skills/skill-*",
+            &src_dir,
+            &dst_dir,
+            color::ColorMode::Never,
+            false,
+        );
+        assert!(result.is_ok(), "symlink creation failed: {result:?}");
+
+        // Verify symlinks created for directories
+        let link_a = dst_dir.join("skills").join("skill-a");
+        let link_b = dst_dir.join("skills").join("skill-b");
+        assert!(link_a.exists(), "skill-a symlink not found");
+        assert!(link_b.exists(), "skill-b symlink not found");
+
+        // Verify nested files are accessible through symlinks
+        assert!(link_a.join("SKILL.md").exists());
+        assert!(link_b.join("SKILL.md").exists());
 
         std::fs::remove_dir_all(&src_dir).ok();
         std::fs::remove_dir_all(&dst_dir).ok();
