@@ -25,6 +25,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent glob * from matching across path separators in hook symlink/copy ([#45](https://github.com/wadackel/ofsht/pull/45))
 
 
+### Miscellaneous
+
+- Release v0.2.1 ([#43](https://github.com/wadackel/ofsht/pull/43))
+
+
+## [0.2.1] - 2026-02-20
+
+### Dependencies
+
+- Update release-plz/action action to v0.5.127 ([#44](https://github.com/wadackel/ofsht/pull/44))
+
+- Update github-actions (official) ([#41](https://github.com/wadackel/ofsht/pull/41))
+
+- Update github-actions (third-party) ([#42](https://github.com/wadackel/ofsht/pull/42))
+
+
+### Fixed
+
+- Update cargo dependencies (patch & minor) ([#46](https://github.com/wadackel/ofsht/pull/46))
+
+- Prevent glob * from matching across path separators in hook symlink/copy ([#45](https://github.com/wadackel/ofsht/pull/45))
+
+
 ## [0.2.0] - 2025-12-14
 
 ### Added
