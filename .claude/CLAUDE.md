@@ -61,6 +61,14 @@ cargo run -- sync --run --copy
 
 See `docs/TEST.md` for comprehensive manual testing procedures.
 
+### New Subcommand Documentation Checklist
+
+When adding a new subcommand, update ALL of the following:
+- `README.md`: ToC, Features section, new Usage section, Common Workflows
+- `CONTRIBUTING.md`: Module Structure tree, Command Modules list
+- `docs/TEST.md`: New verification section, Summary checklist
+- `.claude/CLAUDE.md`: Testing the CLI examples, Module Structure, Command Modules
+
 ## Code Architecture
 
 ### Module Structure
@@ -160,6 +168,11 @@ src/
 - Relative paths are resolved from main repository root (not current directory)
 - Default template: `../{repo}-worktrees/{branch}`
 - Uses `git rev-parse --git-common-dir` to find main repository (requires Git ≥2.5, 2015)
+
+**CLI Argument Convention**
+- **Positional arguments**: Names/entities to operate on (`add <branch>`, `rm [target...]`, `cd [name]`)
+- **Flags (`--flag`)**: Behavior modifiers that filter or change how the command runs (`sync --link`, `add --tmux`)
+- When in doubt: if the argument represents *what to act on*, use positional; if it controls *how to act*, use flag
 
 ### Command Implementation
 
