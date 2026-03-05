@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Miscellaneous
 
+- Release v0.3.0 ([#48](https://github.com/wadackel/ofsht/pull/48))
+
+- Release v0.2.1 ([#47](https://github.com/wadackel/ofsht/pull/47))
+
+
+## [0.3.0] - 2026-03-05
+
+### Added
+
+- Add ofsht sync command to re-apply hooks to existing worktrees ([#51](https://github.com/wadackel/ofsht/pull/51))
+
+
+### Documentation
+
+- Add subcommand checklist and CLI argument convention to CLAUDE.md ([#52](https://github.com/wadackel/ofsht/pull/52))
+
+
+### Miscellaneous
+
 - Release v0.2.1 ([#47](https://github.com/wadackel/ofsht/pull/47))
 
 
