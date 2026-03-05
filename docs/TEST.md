@@ -332,6 +332,90 @@ ofsht rm /private/tmp/demo-ofsht-worktrees/feature-copy-link
 # Deleted branch: feature-copy-link
 ```
 
+## Sync Command Verification
+
+### 1. Setup
+
+```bash
+cd /tmp/demo-ofsht
+
+cat > .ofsht.toml << 'EOF'
+[hooks.create]
+run = ["echo 'sync hook ran'"]
+copy = [".testrc"]
+link = [".tool-versions"]
+
+[worktree]
+dir = "../{repo}-worktrees/{branch}"
+EOF
+
+# Create shared files outside of git tracking
+echo "test config" > .testrc
+echo "nodejs 20" > .tool-versions
+echo ".testrc" >> .gitignore
+echo ".tool-versions" >> .gitignore
+git add .gitignore .ofsht.toml && git commit -m "add sync test config"
+
+# Create worktrees (shared files don't exist in them yet)
+ofsht add sync-test-a
+ofsht add sync-test-b
+```
+
+### 2. Sync All Actions
+
+```bash
+cd /tmp/demo-ofsht
+ofsht sync
+
+# Expected: run, copy, and link actions execute for both worktrees
+# Verify:
+cat ../demo-ofsht-worktrees/sync-test-a/.testrc
+# Expected: "test config"
+
+ls -la ../demo-ofsht-worktrees/sync-test-a/.tool-versions
+# Expected: symlink -> /tmp/demo-ofsht/.tool-versions
+```
+
+### 3. Idempotency
+
+```bash
+ofsht sync
+
+# Expected: symlinks show "Symlink already exists", no errors, exit 0
+```
+
+### 4. Flag Filtering
+
+```bash
+# Only symlinks
+ofsht sync --link
+# Expected: only symlink operations, no run/copy log lines
+
+# Only run + copy
+ofsht sync --run --copy
+# Expected: run and copy only, no symlink log lines
+```
+
+### 5. Run from Worktree
+
+```bash
+cd ../demo-ofsht-worktrees/sync-test-a
+ofsht sync
+
+# Expected: applies to ALL non-main worktrees (including sync-test-a itself)
+cd /tmp/demo-ofsht
+```
+
+### 6. No Worktrees
+
+```bash
+ofsht rm sync-test-a
+ofsht rm sync-test-b
+ofsht sync
+
+# Expected: "No non-main worktrees found. Nothing to sync." exit 0
+```
+
 ## zoxide Integration Verification
 
 ### Verify Prerequisites
@@ -520,6 +604,7 @@ This document verified the following features:
 - ✅ Basic operations (add, ls, cd, rm)
 - ✅ Hook functionality (create, delete)
 - ✅ File copying and symlink creation
+- ✅ Sync command (sync hook operations to existing worktrees)
 - ✅ zoxide integration
 - ✅ Path template customization
 - ✅ Local/global configuration

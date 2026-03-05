@@ -166,7 +166,8 @@ src/
 ├── hooks.rs             # Hook execution engine (run/copy/link)
 ├── service.rs           # Service layer orchestrating git, hooks, and integrations
 ├── commands/
-│   └── common.rs        # Shared utilities for command handlers
+│   ├── common.rs        # Shared utilities for command handlers
+│   └── sync.rs          # Sync hooks to existing worktrees
 ├── config/
 │   ├── mod.rs           # Config module root (re-exports)
 │   ├── schema.rs        # Type definitions and templates
@@ -251,6 +252,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **list.rs** (`cmd_list`): Format and display worktree list (interactive vs pipe mode)
 - **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last
 - **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/rm integration
+- **sync.rs** (`cmd_sync`): Re-apply `hooks.create` (run/copy/link) to all existing non-main worktrees with `--run`/`--copy`/`--link` flag filtering
 
 **Key Shared Functions** (in `commands/common.rs`):
 - `get_main_repo_root()`: Find main repo using `git rev-parse --git-common-dir`
