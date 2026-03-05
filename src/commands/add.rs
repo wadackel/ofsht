@@ -51,8 +51,7 @@ fn process_pr(
             .args(["rev-parse", "--verify", &pr.head_ref_name])
             .current_dir(repo_root)
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            .is_ok_and(|o| o.status.success());
 
         if branch_exists {
             // Conflict: local branch already exists, use unique name
@@ -101,8 +100,7 @@ fn process_pr(
             .args(["rev-parse", "--verify", &pr.head_ref_name])
             .current_dir(repo_root)
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            .is_ok_and(|o| o.status.success());
 
         if branch_exists {
             // Existing local branch - use it directly
@@ -295,8 +293,7 @@ pub fn cmd_new(
             .args(["rev-parse", "--verify", branch])
             .current_dir(&repo_root)
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            .is_ok_and(|o| o.status.success());
 
         if branch_exists {
             // Checkout existing branch (no -b flag)

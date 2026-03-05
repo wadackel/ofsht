@@ -53,6 +53,7 @@ fn main() -> Result<()> {
         } => commands::init::cmd_init(global, local, force, color_mode),
         Commands::Completion { shell } => commands::completion::cmd_completion(&shell),
         Commands::ShellInit { shell } => commands::shell_init::cmd_shell_init(&shell),
+        Commands::Sync { run, copy, link } => commands::sync::cmd_sync(run, copy, link, color_mode),
     }
 }
 

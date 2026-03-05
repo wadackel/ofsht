@@ -123,8 +123,7 @@ pub fn is_fzf_available() -> bool {
     Command::new("fzf")
         .arg("--version")
         .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|output| output.status.success())
 }
 
 /// Build worktree items from git worktree list --porcelain output

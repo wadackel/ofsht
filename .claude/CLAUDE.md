@@ -50,6 +50,11 @@ cargo run -- rm feature-a . feature-b  # Remove multiple including current
 # Test tmux integration (must be run inside tmux)
 cargo run -- add feature-branch --tmux
 
+# Test sync command
+cargo run -- sync
+cargo run -- sync --link
+cargo run -- sync --run --copy
+
 # Use release binary
 ./target/release/ofsht add feature-branch
 ```
@@ -75,7 +80,8 @@ src/
 │   ├── init.rs       # Initialize config files
 │   ├── list.rs       # List worktrees
 │   ├── rm.rs         # Remove worktrees
-│   └── shell_init.rs # Generate shell integration scripts
+│   ├── shell_init.rs # Generate shell integration scripts
+│   └── sync.rs       # Sync hooks to existing worktrees
 ├── config.rs         # TOML configuration loading (local + global)
 ├── domain/           # Domain models and logic
 │   └── worktree.rs   # Worktree entry parsing and formatting
@@ -117,6 +123,7 @@ src/
 - Source files are resolved from the original repository
 - Missing source files emit warnings but don't fail execution
 - **Output Streams**: Hook command stdout/stderr are redirected to stderr to prevent polluting the stdout stream (required for shell integration to work correctly)
+- **Idempotent symlinks**: `ensure_symlink()` checks existing symlinks before creating — returns `AlreadyCorrect` (unchanged), `Replaced` (wrong target fixed), or `Created` (new)
 
 **Graceful Degradation for zoxide** (`integrations/zoxide.rs`)
 - Checks `zoxide --version` to detect availability
@@ -173,6 +180,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **list.rs** (`cmd_list`): Format and display worktree list (interactive vs pipe mode)
 - **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last
 - **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/rm integration
+- **sync.rs** (`cmd_sync`): Re-apply `hooks.create` to all existing non-main worktrees with `--run`/`--copy`/`--link` filtering
 
 **Key Shared Functions** (in `commands/common.rs`):
 - `get_main_repo_root()`: Find main repo using `git rev-parse --git-common-dir`

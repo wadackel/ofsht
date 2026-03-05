@@ -350,6 +350,76 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Result of ensuring a symlink exists at the destination path
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SymlinkResult {
+    /// A new symlink was created
+    Created,
+    /// The symlink already existed and points to the correct target
+    AlreadyCorrect,
+    /// The symlink existed but pointed to a different target; it was replaced
+    Replaced,
+}
+
+/// Ensure a symlink at `dst` points to `src`, creating or replacing as needed
+///
+/// Returns an error if `dst` exists and is not a symlink (to protect user data).
+fn ensure_symlink(src: &Path, dst: &Path) -> Result<SymlinkResult> {
+    let mut was_replaced = false;
+
+    if let Ok(metadata) = dst.symlink_metadata() {
+        if metadata.file_type().is_symlink() {
+            let current_target = std::fs::read_link(dst)
+                .with_context(|| format!("Failed to read symlink target: {}", dst.display()))?;
+            if current_target == src {
+                return Ok(SymlinkResult::AlreadyCorrect);
+            }
+            // Wrong target: remove and recreate
+            // remove_file works for file symlinks; on Windows, directory symlinks need remove_dir
+            std::fs::remove_file(dst)
+                .or_else(|_| std::fs::remove_dir(dst))
+                .with_context(|| format!("Failed to remove existing symlink: {}", dst.display()))?;
+            was_replaced = true;
+        } else {
+            anyhow::bail!(
+                "Cannot create symlink: {} already exists and is not a symlink",
+                dst.display()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(src, dst).with_context(|| {
+        format!(
+            "Failed to create symlink from {} to {}",
+            src.display(),
+            dst.display()
+        )
+    })?;
+
+    #[cfg(windows)]
+    {
+        if src.is_dir() {
+            std::os::windows::fs::symlink_dir(src, dst)
+        } else {
+            std::os::windows::fs::symlink_file(src, dst)
+        }
+        .with_context(|| {
+            format!(
+                "Failed to create symlink from {} to {}",
+                src.display(),
+                dst.display()
+            )
+        })?;
+    }
+
+    Ok(if was_replaced {
+        SymlinkResult::Replaced
+    } else {
+        SymlinkResult::Created
+    })
+}
+
 /// Create symlinks for a pattern (supports glob)
 fn create_symlinks(
     pattern: &str,
@@ -397,47 +467,28 @@ fn create_symlinks(
             })?;
         }
 
+        let result = ensure_symlink(&src_path, &dst_path)?;
+        let msg = match result {
+            SymlinkResult::Created => format!(
+                "Creating symlink: {} → {}",
+                display_path(&src_path),
+                display_path(&dst_path)
+            ),
+            SymlinkResult::AlreadyCorrect => format!(
+                "Symlink already exists: {} → {}",
+                display_path(&src_path),
+                display_path(&dst_path)
+            ),
+            SymlinkResult::Replaced => format!(
+                "Replacing symlink: {} → {}",
+                display_path(&src_path),
+                display_path(&dst_path)
+            ),
+        };
         eprintln!(
             "{}",
-            color::tree_item(
-                color_mode,
-                color::info(
-                    color_mode,
-                    format!(
-                        "Creating symlink: {} → {}",
-                        display_path(&src_path),
-                        display_path(&dst_path)
-                    )
-                ),
-                is_last,
-                1
-            )
+            color::tree_item(color_mode, color::info(color_mode, msg), is_last, 1)
         );
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&src_path, &dst_path).with_context(|| {
-            format!(
-                "Failed to create symlink from {} to {}",
-                src_path.display(),
-                dst_path.display()
-            )
-        })?;
-
-        #[cfg(windows)]
-        {
-            if src_path.is_dir() {
-                std::os::windows::fs::symlink_dir(&src_path, &dst_path)
-            } else {
-                std::os::windows::fs::symlink_file(&src_path, &dst_path)
-            }
-            .with_context(|| {
-                format!(
-                    "Failed to create symlink from {} to {}",
-                    src_path.display(),
-                    dst_path.display()
-                )
-            })?;
-        }
     }
 
     Ok(())
@@ -772,5 +823,124 @@ mod tests {
 
         std::fs::remove_dir_all(&src_dir).ok();
         std::fs::remove_dir_all(&dst_dir).ok();
+    }
+
+    // ensure_symlink tests (unix only)
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_symlink_creates_new() {
+        let tmp = std::env::temp_dir().join("test_ensure_symlink_new");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("src_file");
+        let dst = tmp.join("dst_link");
+        std::fs::write(&src, "hello").unwrap();
+
+        let result = ensure_symlink(&src, &dst).unwrap();
+        assert_eq!(result, SymlinkResult::Created);
+        assert!(dst.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_link(&dst).unwrap(), src);
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_symlink_already_correct() {
+        let tmp = std::env::temp_dir().join("test_ensure_symlink_correct");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("src_file");
+        let dst = tmp.join("dst_link");
+        std::fs::write(&src, "hello").unwrap();
+        std::os::unix::fs::symlink(&src, &dst).unwrap();
+
+        let result = ensure_symlink(&src, &dst).unwrap();
+        assert_eq!(result, SymlinkResult::AlreadyCorrect);
+        // Symlink should still point to the same target
+        assert_eq!(std::fs::read_link(&dst).unwrap(), src);
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_symlink_replaced_wrong_target() {
+        let tmp = std::env::temp_dir().join("test_ensure_symlink_replace");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("src_file");
+        let other = tmp.join("other_file");
+        let dst = tmp.join("dst_link");
+        std::fs::write(&src, "hello").unwrap();
+        std::fs::write(&other, "other").unwrap();
+        // Point dst at 'other' first
+        std::os::unix::fs::symlink(&other, &dst).unwrap();
+
+        let result = ensure_symlink(&src, &dst).unwrap();
+        assert_eq!(result, SymlinkResult::Replaced);
+        assert_eq!(std::fs::read_link(&dst).unwrap(), src);
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_symlink_dangling_replaced() {
+        let tmp = std::env::temp_dir().join("test_ensure_symlink_dangling");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("src_file");
+        let nonexistent = tmp.join("gone");
+        let dst = tmp.join("dst_link");
+        std::fs::write(&src, "hello").unwrap();
+        // Create dangling symlink (points to a path that doesn't exist)
+        std::os::unix::fs::symlink(&nonexistent, &dst).unwrap();
+
+        let result = ensure_symlink(&src, &dst).unwrap();
+        assert_eq!(result, SymlinkResult::Replaced);
+        assert_eq!(std::fs::read_link(&dst).unwrap(), src);
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_symlink_regular_file_conflict() {
+        let tmp = std::env::temp_dir().join("test_ensure_symlink_conflict_file");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("src_file");
+        let dst = tmp.join("dst_regular");
+        std::fs::write(&src, "hello").unwrap();
+        // dst is a regular file (not a symlink)
+        std::fs::write(&dst, "regular").unwrap();
+
+        let result = ensure_symlink(&src, &dst);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("already exists and is not a symlink"),
+            "unexpected error: {err}"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_symlink_directory_conflict() {
+        let tmp = std::env::temp_dir().join("test_ensure_symlink_conflict_dir");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("src_file");
+        let dst = tmp.join("dst_directory");
+        std::fs::write(&src, "hello").unwrap();
+        // dst is a directory (not a symlink)
+        std::fs::create_dir_all(&dst).unwrap();
+
+        let result = ensure_symlink(&src, &dst);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("already exists and is not a symlink"),
+            "unexpected error: {err}"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

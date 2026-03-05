@@ -23,6 +23,7 @@ A command-line tool for managing Git worktrees with automation features.
 - [Quick Start](#quick-start)
 - [Usage](#usage)
   - [Basic Operations](#basic-operations)
+  - [Sync Hook Operations](#sync-hook-operations)
   - [GitHub Integration](#github-integration)
   - [Shell Integration](#shell-integration)
   - [Configuration](#configuration)
@@ -48,6 +49,7 @@ A command-line tool for managing Git worktrees with automation features.
 - Copy files from main repository (e.g., `.env`, `.nvmrc`)
 - Create symlinks for shared directories (e.g., `.vscode`)
 - Execute cleanup commands before worktree deletion
+- Sync hook operations to all existing worktrees with `ofsht sync`
 - Customize worktree paths with `{repo}` and `{branch}` variables
 
 💻 **Shell Integration**
@@ -369,6 +371,30 @@ create = "window"   # "window" (default) or "pane"
 enabled = true  # Default: true
 ```
 
+### Sync Hook Operations
+
+After adding new shared files to your hook configuration, use `sync` to apply them to all existing worktrees:
+
+```bash
+# Sync all hook actions (run + copy + link) to all existing worktrees
+ofsht sync
+
+# Only sync symlinks
+ofsht sync --link
+
+# Only sync file copies
+ofsht sync --copy
+
+# Combine flags
+ofsht sync --run --copy
+```
+
+> [!TIP]
+> `ofsht sync` is idempotent. Existing symlinks pointing to the correct target are left unchanged, and files are overwritten safely. You can run it repeatedly without side effects.
+
+> [!NOTE]
+> `ofsht sync` re-applies `hooks.create` actions only. It does not execute `hooks.delete` actions. If a worktree directory is missing, it is skipped with a warning.
+
 ### GitHub Integration
 
 When the `gh` CLI is installed and authenticated, you can create worktrees directly from GitHub issues or pull requests:
@@ -558,6 +584,18 @@ ofsht rm feature-new-api          # Hooks run cleanup commands
 
 # Or clean up from within the worktree
 ofsht rm .                        # Automatically returns to main repo
+```
+
+### Adding Shared Files to Existing Worktrees
+
+```bash
+# You realize you need a shared .prettierrc across all worktrees
+# 1. Add it to your config
+echo 'link = [".prettierrc"]' >> .ofsht.toml
+
+# 2. Sync to all existing worktrees at once
+ofsht sync --link
+# Creates symlinks in all worktrees without re-running install commands
 ```
 
 ### Managing Multiple Projects

@@ -89,6 +89,21 @@ pub enum Commands {
         /// Shell type (bash, zsh, fish)
         shell: String,
     },
+    /// Sync hook file operations to existing worktrees
+    ///
+    /// Re-applies hooks.create (run/copy/link) to all existing non-main worktrees.
+    /// When no flags are specified, all actions are executed.
+    Sync {
+        /// Only execute run commands
+        #[arg(long)]
+        run: bool,
+        /// Only execute copy operations
+        #[arg(long)]
+        copy: bool,
+        /// Only execute link operations
+        #[arg(long)]
+        link: bool,
+    },
 }
 
 /// List Git refs (branches and tags) for completion of start-point arguments
