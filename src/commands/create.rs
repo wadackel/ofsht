@@ -63,8 +63,7 @@ pub fn cmd_create(
             .args(["rev-parse", "--verify", branch])
             .current_dir(&repo_root)
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            .is_ok_and(|o| o.status.success());
 
         if branch_exists {
             // Checkout existing branch (no -b flag)
