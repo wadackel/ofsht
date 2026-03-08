@@ -2,7 +2,12 @@
 #![allow(clippy::must_use_candidate)]
 use anyhow::{Context, Result};
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
+
+use crate::domain::worktree::{
+    calculate_relative_path, calculate_worktree_root_from_paths, display_path,
+};
 
 /// Item to display in fzf
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,9 +62,10 @@ impl FzfPicker for RealFzfPicker {
         }
 
         // Add preview command to show git log for each worktree
+        // Extract the last field (path) and expand ~ to $HOME
         // Use % as placeholder to avoid conflicts with fzf's {}
         let preview_cmd =
-            "echo {} | awk '{print $NF}' | xargs -I % git -C % log --oneline -n 10 2>/dev/null";
+            "echo {} | awk '{print $NF}' | sed \"s|^~|$HOME|\" | xargs -I % git -C % log --oneline -n 10 2>/dev/null";
         cmd.arg("--preview").arg(preview_cmd);
 
         // Add some default options for better UX
@@ -126,24 +132,31 @@ pub fn is_fzf_available() -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
+/// Intermediate parsed worktree entry for fzf display
+struct ParsedWorktree {
+    path: String,
+    branch: Option<String>,
+}
+
 /// Build worktree items from git worktree list --porcelain output
+///
+/// Display format: `{name} · {branch} · {path}`
+/// - Index 0 is the main worktree (displayed as `@`)
+/// - Non-main worktrees show their relative path from the worktree root
+/// - Columns are padded for alignment (except the last column)
 pub fn build_worktree_items(porcelain_output: &str) -> Vec<FzfItem> {
-    let mut items = Vec::new();
+    // Pass 1: Parse porcelain output into intermediate entries
+    let mut entries = Vec::new();
     let mut current_path: Option<String> = None;
     let mut current_branch: Option<String> = None;
 
     for line in porcelain_output.lines() {
         let line = line.trim();
         if line.is_empty() {
-            // End of a worktree entry
             if let Some(path) = current_path.take() {
-                let display = current_branch.take().map_or_else(
-                    || format!("(detached) {path}"),
-                    |branch| format!("{branch} {path}"),
-                );
-                items.push(FzfItem {
-                    display,
-                    value: path,
+                entries.push(ParsedWorktree {
+                    path,
+                    branch: current_branch.take(),
                 });
             }
             continue;
@@ -152,7 +165,6 @@ pub fn build_worktree_items(porcelain_output: &str) -> Vec<FzfItem> {
         if let Some(path) = line.strip_prefix("worktree ") {
             current_path = Some(path.to_string());
         } else if let Some(branch_ref) = line.strip_prefix("branch ") {
-            // Extract branch name from refs/heads/branch-name
             if let Some(branch_name) = branch_ref.strip_prefix("refs/heads/") {
                 current_branch = Some(branch_name.to_string());
             }
@@ -161,19 +173,88 @@ pub fn build_worktree_items(porcelain_output: &str) -> Vec<FzfItem> {
         }
     }
 
-    // Handle last entry if file doesn't end with empty line
+    // Handle last entry if output doesn't end with empty line
     if let Some(path) = current_path {
-        let display = current_branch.map_or_else(
-            || format!("(detached) {path}"),
-            |branch| format!("{branch} {path}"),
-        );
-        items.push(FzfItem {
-            display,
-            value: path,
+        entries.push(ParsedWorktree {
+            path,
+            branch: current_branch,
         });
     }
 
-    items
+    if entries.is_empty() {
+        return Vec::new();
+    }
+
+    // Calculate worktree root from non-main paths
+    let non_main_paths: Vec<PathBuf> = entries
+        .iter()
+        .skip(1)
+        .map(|e| PathBuf::from(&e.path))
+        .collect();
+    let worktree_root = calculate_worktree_root_from_paths(&non_main_paths);
+
+    // Build name, branch, display_path for each entry
+    let display_entries: Vec<(String, String, String)> = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let name = if index == 0 {
+                "@".to_string()
+            } else {
+                worktree_root
+                    .as_ref()
+                    .and_then(|root| calculate_relative_path(&PathBuf::from(&entry.path), root))
+                    .unwrap_or_else(|| {
+                        // Fallback: use directory name
+                        PathBuf::from(&entry.path)
+                            .file_name()
+                            .map_or_else(|| entry.path.clone(), |n| n.to_string_lossy().to_string())
+                    })
+            };
+
+            let branch = if index == 0 {
+                "[@]".to_string()
+            } else {
+                entry
+                    .branch
+                    .as_deref()
+                    .map_or_else(|| "[detached]".to_string(), |b| format!("[{b}]"))
+            };
+
+            let path = display_path(&PathBuf::from(&entry.path));
+
+            (name, branch, path)
+        })
+        .collect();
+
+    // Pass 2: Calculate column widths and format display strings
+    let max_name_width = display_entries
+        .iter()
+        .map(|(n, _, _)| n.len())
+        .max()
+        .unwrap_or(0);
+    let max_branch_width = display_entries
+        .iter()
+        .map(|(_, b, _)| b.len())
+        .max()
+        .unwrap_or(0);
+
+    display_entries
+        .into_iter()
+        .zip(entries.iter())
+        .map(|((name, branch, path), entry)| {
+            let name_padding = " ".repeat(max_name_width.saturating_sub(name.len()));
+            let branch_padding = " ".repeat(max_branch_width.saturating_sub(branch.len()));
+
+            // Last column (path) has no padding to avoid trailing whitespace
+            let display = format!("{name}{name_padding} · {branch}{branch_padding} · {path}");
+
+            FzfItem {
+                display,
+                value: entry.path.clone(),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -197,10 +278,10 @@ mod tests {
     #[test]
     fn test_fzf_item_creation() {
         let item = FzfItem {
-            display: "feature-branch /path/to/worktree".to_string(),
+            display: "feature · feat/new · /path/to/worktree".to_string(),
             value: "/path/to/worktree".to_string(),
         };
-        assert_eq!(item.display, "feature-branch /path/to/worktree");
+        assert_eq!(item.display, "feature · feat/new · /path/to/worktree");
         assert_eq!(item.value, "/path/to/worktree");
     }
 
@@ -270,25 +351,139 @@ branch refs/heads/feature-branch
         let items = build_worktree_items(porcelain);
         assert_eq!(items.len(), 2);
 
-        // First item should be main worktree
+        // First item: main worktree displayed as "@" with [@] branch
         assert_eq!(items[0].value, "/path/to/main");
-        assert!(items[0].display.contains("main"));
+        assert!(items[0].display.starts_with('@'));
+        assert!(items[0].display.contains(" · [@]"));
+        assert!(items[0].display.contains(" · /path/to/main"));
 
-        // Second item should be feature branch
+        // Second item: feature branch with name and [branch]
         assert_eq!(items[1].value, "/path/to/feature");
-        assert!(items[1].display.contains("feature-branch"));
+        assert!(items[1].display.contains("feature"));
+        assert!(items[1].display.contains(" · [feature-branch]"));
+        assert!(items[1].display.contains(" · /path/to/feature"));
     }
 
     #[test]
     fn test_build_worktree_items_detached() {
-        let porcelain = r"worktree /path/to/detached
+        let porcelain = r"worktree /path/to/main
 HEAD abc123
+branch refs/heads/main
+
+worktree /path/to/detached
+HEAD def456
 detached
 
 ";
         let items = build_worktree_items(porcelain);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].value, "/path/to/detached");
+        assert!(items[1].display.contains("detached"));
+        assert!(items[1].display.contains(" · [detached]"));
+    }
+
+    #[test]
+    fn test_build_worktree_items_single_main_only() {
+        let porcelain = r"worktree /path/to/main
+HEAD abc123
+branch refs/heads/main
+
+";
+        let items = build_worktree_items(porcelain);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].value, "/path/to/detached");
-        assert!(items[0].display.contains("(detached)"));
+        assert_eq!(items[0].value, "/path/to/main");
+        assert!(items[0].display.starts_with('@'));
+        assert!(items[0].display.contains(" · [@]"));
+    }
+
+    #[test]
+    fn test_build_worktree_items_nested_branch() {
+        let porcelain = r"worktree /path/to/main
+HEAD abc123
+branch refs/heads/main
+
+worktree /worktrees/feat/foo
+HEAD def456
+branch refs/heads/feat/foo
+
+worktree /worktrees/fix/bar
+HEAD ghi789
+branch refs/heads/fix/bar
+
+";
+        let items = build_worktree_items(porcelain);
+        assert_eq!(items.len(), 3);
+
+        // Nested worktree names should use relative path from root
+        assert_eq!(items[1].value, "/worktrees/feat/foo");
+        assert!(items[1].display.contains("feat/foo"));
+        assert!(items[1].display.contains(" · [feat/foo]"));
+
+        assert_eq!(items[2].value, "/worktrees/fix/bar");
+        assert!(items[2].display.contains(" · [fix/bar]"));
+    }
+
+    #[test]
+    fn test_build_worktree_items_padding_alignment() {
+        let porcelain = r"worktree /path/to/main
+HEAD abc123
+branch refs/heads/main
+
+worktree /worktrees/a
+HEAD def456
+branch refs/heads/short
+
+worktree /worktrees/long-name
+HEAD ghi789
+branch refs/heads/very-long-branch-name
+
+";
+        let items = build_worktree_items(porcelain);
+        assert_eq!(items.len(), 3);
+
+        // All "·" separators should be at the same column positions
+        let first_sep_positions: Vec<usize> = items
+            .iter()
+            .map(|item| item.display.find(" · ").unwrap())
+            .collect();
+        assert!(
+            first_sep_positions.windows(2).all(|w| w[0] == w[1]),
+            "First separator positions should be aligned: {first_sep_positions:?}"
+        );
+
+        // Find second separator positions
+        let second_sep_positions: Vec<usize> = items
+            .iter()
+            .map(|item| {
+                let after_first = first_sep_positions[0] + 3;
+                after_first + item.display[after_first..].find(" · ").unwrap()
+            })
+            .collect();
+        assert!(
+            second_sep_positions.windows(2).all(|w| w[0] == w[1]),
+            "Second separator positions should be aligned: {second_sep_positions:?}"
+        );
+    }
+
+    #[test]
+    fn test_build_worktree_items_no_trailing_whitespace() {
+        let porcelain = r"worktree /path/to/main
+HEAD abc123
+branch refs/heads/main
+
+worktree /worktrees/feature
+HEAD def456
+branch refs/heads/feature-branch
+
+";
+        let items = build_worktree_items(porcelain);
+        for item in &items {
+            assert_eq!(
+                item.display,
+                item.display.trim_end(),
+                "Display should not have trailing whitespace: {:?}",
+                item.display
+            );
+        }
     }
 }
