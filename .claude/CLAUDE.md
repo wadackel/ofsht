@@ -154,6 +154,10 @@ src/
 
 **Interactive Selection with fzf** (`integrations/fzf/`)
 - When `ofsht cd` or `ofsht rm` is run without arguments, fzf launches for interactive selection
+- Display format: `{worktree_name} · [{branch}] · {display_path}` with column alignment
+  - Main worktree: name=`@`, branch=`[@]`
+  - Detached HEAD: branch=`[detached]`
+  - Branch bracket style `[...]` matches `format_worktree_table` in `ofsht ls`
 - Graceful degradation: returns error if fzf is disabled or not installed
 - Uses `FzfPicker` trait for testability (`MockFzfPicker` in tests)
 - `build_worktree_items()` parses `git worktree list --porcelain` output
