@@ -96,9 +96,10 @@ jobs:
       - name: Extract tag name
         id: extract_tag
         if: steps.release.outputs.releases_created == 'true'
+        env:
+          RELEASES: ${{ steps.release.outputs.releases }}
         run: |
-          # Extract tag from release-plz output
-          tag=$(echo '${{ steps.release.outputs.releases }}' | jq -r '.[0].tag')
+          tag=$(echo "$RELEASES" | jq -r '.[0].tag')
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Created release tag: $tag"
 
@@ -143,8 +144,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: ./.github/actions/setup-rust
@@ -159,26 +158,18 @@ jobs:
             sudo apt-get install -y musl-tools
           fi
 
-      - name: Cache cargo registry
+      - name: Cache Cargo dependencies
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         continue-on-error: true
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        continue-on-error: true
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        continue-on-error: true
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-${{ matrix.target }}-
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -197,7 +188,7 @@ jobs:
           mv ofsht-${{ matrix.target }}.${{ matrix.archive_suffix }} ${{ github.workspace }}/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ofsht-${{ matrix.target }}
           path: ofsht-${{ matrix.target }}.${{ matrix.archive_suffix }}
@@ -211,9 +202,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Required to upload assets and publish release
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release-plz-release.outputs.tag_name }}
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           path: artifacts
 
@@ -224,48 +218,39 @@ jobs:
           ls -lh release-assets/
 
       - name: Upload release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Upload all assets to the draft release
-          gh release upload "$tag" release-assets/* \
+          gh release upload "$TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
-          echo "Uploaded assets to release $tag"
+          echo "Uploaded assets to release $TAG"
 
       - name: Verify release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Check that exactly 4 assets were uploaded
-          asset_count=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
+          asset_count=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
 
           if [ "$asset_count" -ne 4 ]; then
             echo "Error: Expected 4 assets, found $asset_count"
-            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
             exit 1
           fi
 
           echo "Verified: $asset_count assets uploaded successfully"
 
       - name: Publish release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ needs.release-plz-release.outputs.tag_name }}"
 
           # Publish the draft release
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
-          echo "Published release $tag"
+          echo "Published release $TAG"
 
   # Update Homebrew tap
   # This job uses a GitHub App for authentication instead of a PAT for improved security:
@@ -300,10 +285,10 @@ jobs:
       - name: Trigger and monitor tap update workflow
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          TAG: ${{ needs.release-plz-release.outputs.tag_name }}
         run: |
           set -euo pipefail
 
-          TAG="${{ needs.release-plz-release.outputs.tag_name }}"
           REPO="wadackel/homebrew-tap"
           # Record current time for filtering workflow runs
           DISPATCH_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
