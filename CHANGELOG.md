@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-09
+
+### Added
+
+- Add `ofsht open` command to open all worktrees in tmux ([#58](https://github.com/wadackel/ofsht/pull/58))
+
+
+### Documentation
+
+- Add fzf display format details to CLAUDE.md ([#57](https://github.com/wadackel/ofsht/pull/57))
+
+
 ## [0.3.1] - 2026-03-08
 
 ### Added
