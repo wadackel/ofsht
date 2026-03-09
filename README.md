@@ -29,6 +29,7 @@ A command-line tool for managing Git worktrees with automation features.
   - [Configuration](#configuration)
   - [zoxide Integration](#zoxide-integration)
   - [tmux Integration](#tmux-integration)
+  - [Open All Worktrees in tmux](#open-all-worktrees-in-tmux)
   - [Shell Completion](#shell-completion)
 - [Common Workflows](#common-workflows)
 - [FAQ](#faq)
@@ -365,6 +366,7 @@ options = ["--height=50%", "--border"]
 # Configure tmux integration behavior
 behavior = "auto"   # "auto" (default, flag-based), "always", "never"
 create = "window"   # "window" (default) or "pane"
+open = "window"     # Default mode for `ofsht open`: "window" or "pane"
 
 [integration.gh]
 # Enable/disable GitHub integration
@@ -494,6 +496,36 @@ ofsht add feature-awesome  # Creates tmux window/pane automatically
 - Must be running inside a tmux session when tmux integration is active
 - tmux binary must be available in PATH
 
+### Open All Worktrees in tmux
+
+Quickly restore your tmux workspace by opening all worktrees at once:
+
+```bash
+# Open all worktrees in separate tmux windows (default)
+ofsht open
+
+# Open all worktrees as panes in the current window
+ofsht open --pane
+
+# Explicitly request window mode
+ofsht open --window
+```
+
+The current worktree is automatically skipped (you're already there). Each window is named after the worktree directory name (e.g., `feature-login`, `docs·update`).
+
+**Configuration:**
+
+```toml
+# In ~/.config/ofsht/config.toml
+[integration.tmux]
+open = "window"   # Default mode for `ofsht open`: "window" or "pane"
+```
+
+CLI flags (`--pane`, `--window`) override the config value.
+
+> [!CAUTION]
+> `ofsht open` requires running inside a tmux session. Running outside tmux will fail with an error.
+
 ### Shell Completion
 
 `ofsht` provides dynamic shell completion with smart branch and worktree name suggestions.
@@ -584,6 +616,16 @@ ofsht rm feature-new-api          # Hooks run cleanup commands
 
 # Or clean up from within the worktree
 ofsht rm .                        # Automatically returns to main repo
+```
+
+### Restoring tmux Workspace After Restart
+
+```bash
+# After a tmux restart, open all worktrees from any worktree
+ofsht open
+
+# Or as panes for a tiled layout
+ofsht open --pane
 ```
 
 ### Adding Shared Files to Existing Worktrees

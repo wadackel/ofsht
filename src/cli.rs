@@ -89,6 +89,15 @@ pub enum Commands {
         /// Shell type (bash, zsh, fish)
         shell: String,
     },
+    /// Open all worktrees in tmux windows or panes
+    Open {
+        /// Open each worktree in a separate pane (in the current window)
+        #[arg(long, conflicts_with = "window")]
+        pane: bool,
+        /// Open each worktree in a separate tmux window
+        #[arg(long, conflicts_with = "pane")]
+        window: bool,
+    },
     /// Sync hook file operations to existing worktrees
     ///
     /// Re-applies hooks.create (run/copy/link) to all existing non-main worktrees.

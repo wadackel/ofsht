@@ -134,6 +134,9 @@ pub struct TmuxConfig {
     /// Values: "window" or "pane"
     #[serde(default = "default_tmux_create")]
     pub create: String,
+    /// Default mode for `ofsht open`: "pane" or "window"
+    #[serde(default = "default_tmux_open")]
+    pub open: String,
 }
 
 impl Default for TmuxConfig {
@@ -141,11 +144,16 @@ impl Default for TmuxConfig {
         Self {
             behavior: TmuxBehavior::default(),
             create: default_tmux_create(),
+            open: default_tmux_open(),
         }
     }
 }
 
 fn default_tmux_create() -> String {
+    "window".to_string()
+}
+
+fn default_tmux_open() -> String {
     "window".to_string()
 }
 

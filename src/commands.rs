@@ -8,6 +8,7 @@ pub mod completion;
 pub mod create;
 pub mod init;
 pub mod list;
+pub mod open;
 pub mod rm;
 pub mod shell_init;
 pub mod sync;

@@ -597,6 +597,64 @@ cat .ofsht.toml
 which <command>
 ```
 
+## Open Command Verification (tmux)
+
+### Prerequisites
+
+- Must be running inside a tmux session
+- At least one non-main worktree exists
+
+### 1. Window Mode (default)
+
+```bash
+cd /tmp/demo-ofsht
+
+# Create a few worktrees
+ofsht add feature-a
+ofsht add feature-b
+
+# Open all worktrees as tmux windows
+ofsht open
+
+# Expected:
+# - New tmux windows created for worktrees you're not currently in
+# - Current worktree is skipped
+# - stderr: "Opened N worktree(s) as windows (skipped current: ...)"
+```
+
+### 2. Pane Mode
+
+```bash
+ofsht open --pane
+
+# Expected:
+# - Panes split in current window for each worktree (excluding current)
+# - Layout automatically set to "tiled"
+# - stderr: "Opened N worktree(s) as panes (skipped current: ...)"
+```
+
+### 3. Outside tmux
+
+```bash
+# Run outside of tmux
+ofsht open
+
+# Expected:
+# Error: tmux integration requires running inside a tmux session
+```
+
+### 4. No Worktrees to Open
+
+```bash
+# When you only have the main worktree and you're in it
+ofsht rm feature-a
+ofsht rm feature-b
+ofsht open
+
+# Expected:
+# "No worktrees to open (all worktrees are already in the current session)."
+```
+
 ## Summary
 
 This document verified the following features:
@@ -605,6 +663,7 @@ This document verified the following features:
 - ✅ Hook functionality (create, delete)
 - ✅ File copying and symlink creation
 - ✅ Sync command (sync hook operations to existing worktrees)
+- ✅ Open command (open all worktrees in tmux)
 - ✅ zoxide integration
 - ✅ Path template customization
 - ✅ Local/global configuration
