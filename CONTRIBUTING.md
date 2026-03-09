@@ -167,6 +167,7 @@ src/
 ├── service.rs           # Service layer orchestrating git, hooks, and integrations
 ├── commands/
 │   ├── common.rs        # Shared utilities for command handlers
+│   ├── open.rs          # Open all worktrees in tmux
 │   └── sync.rs          # Sync hooks to existing worktrees
 ├── config/
 │   ├── mod.rs           # Config module root (re-exports)
@@ -250,6 +251,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **create.rs** (`cmd_create`): Simple worktree creation without GitHub/tmux (deprecated command)
 - **init.rs** (`cmd_init`): Generate global/local config templates
 - **list.rs** (`cmd_list`): Format and display worktree list (interactive vs pipe mode)
+- **open.rs** (`cmd_open`): Open all worktrees in tmux windows or panes, skipping the current worktree
 - **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last
 - **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/rm integration
 - **sync.rs** (`cmd_sync`): Re-apply `hooks.create` (run/copy/link) to all existing non-main worktrees with `--run`/`--copy`/`--link` flag filtering
@@ -285,6 +287,7 @@ options = ["--height=50%", "--border"]  # Additional fzf command-line options
 [integration.tmux]
 behavior = "auto"   # "auto" (flag-based, default), "always", "never"
 create = "window"   # "window" (default), "pane"
+open = "window"     # Default mode for `ofsht open`: "window" or "pane"
 
 [integration.gh]
 enabled = true  # Default: true (only available in global config)

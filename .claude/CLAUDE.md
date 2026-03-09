@@ -47,6 +47,11 @@ cargo run -- rm /path/to/worktree
 cargo run -- rm feature-a feature-b  # Remove multiple worktrees
 cargo run -- rm feature-a . feature-b  # Remove multiple including current
 
+# Test open command (must be run inside tmux)
+cargo run -- open            # Open all worktrees as windows
+cargo run -- open --pane     # Open all worktrees as panes
+cargo run -- open --window   # Explicitly use window mode
+
 # Test tmux integration (must be run inside tmux)
 cargo run -- add feature-branch --tmux
 
@@ -87,6 +92,7 @@ src/
 │   ├── create.rs     # Simple worktree creation
 │   ├── init.rs       # Initialize config files
 │   ├── list.rs       # List worktrees
+│   ├── open.rs       # Open all worktrees in tmux
 │   ├── rm.rs         # Remove worktrees
 │   ├── shell_init.rs # Generate shell integration scripts
 │   └── sync.rs       # Sync hooks to existing worktrees
@@ -150,6 +156,8 @@ src/
 - `TmuxLauncher::create_pane()`: Creates horizontal split pane in current window
 - `sanitize_window_name()`: Replaces `/` and spaces with `·`, truncates to 50 chars
 - `create` config determines what to create: "window" (default) or "pane"
+- `open` config determines the default mode for `ofsht open`: "window" (default) or "pane"
+- `ofsht open`: Opens all worktrees in tmux (windows or panes), skipping the current worktree
 - Failures are warnings only (worktree preserved, error goes to stderr)
 
 **Interactive Selection with fzf** (`integrations/fzf/`)
@@ -195,6 +203,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **create.rs** (`cmd_create`): Simple worktree creation without GitHub/tmux (deprecated command)
 - **init.rs** (`cmd_init`): Generate global/local config templates
 - **list.rs** (`cmd_list`): Format and display worktree list (interactive vs pipe mode)
+- **open.rs** (`cmd_open`): Open all worktrees in tmux windows or panes, skipping current worktree
 - **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last
 - **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/rm integration
 - **sync.rs** (`cmd_sync`): Re-apply `hooks.create` to all existing non-main worktrees with `--run`/`--copy`/`--link` filtering
@@ -230,6 +239,7 @@ options = ["--height=50%", "--border"]  # Additional fzf command-line options
 [integration.tmux]
 behavior = "auto"   # "auto" (flag-based, default), "always", "never"
 create = "window"   # "window" (default), "pane"
+open = "window"     # Default mode for `ofsht open`: "window" or "pane"
 ```
 
 ## Development Philosophy

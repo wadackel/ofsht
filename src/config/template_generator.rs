@@ -70,13 +70,16 @@ enabled = false"
 # behavior: \"auto\" (use --tmux flag), \"always\" (always enabled), \"never\" (disabled)
 behavior = \"auto\"
 # Determines what to create: a new window or split pane
-create = \"window\"  # \"window\" or \"pane\""
+create = \"window\"  # \"window\" or \"pane\"
+# Default mode for `ofsht open`: \"pane\" or \"window\"
+open = \"window\""
         } else {
             "[integration.tmux]
 # Configure tmux integration behavior
 # tmux not detected - install from https://github.com/tmux/tmux
 behavior = \"never\"
-create = \"window\""
+create = \"window\"
+open = \"window\""
         };
 
         let gh_section = if self.gh_available {
