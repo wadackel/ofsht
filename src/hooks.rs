@@ -163,6 +163,83 @@ fn execute_hooks_impl(
     Ok(())
 }
 
+/// Temporarily redirect the process's stdout to stderr, run a closure, then restore.
+///
+/// This allows child processes spawned via `Stdio::inherit()` to write to stderr
+/// instead of stdout, preventing hook output from polluting the parent's stdout
+/// stream (required for shell integration).
+///
+/// On non-Unix platforms, the closure runs without redirection.
+///
+/// Note: This mutates process-global fd 1, which is not thread-safe. This is
+/// acceptable because ofsht is a single-threaded CLI tool and hook execution
+/// is synchronous.
+fn with_stdout_to_stderr<F, T>(f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+
+        extern "C" {
+            fn dup(fd: std::os::raw::c_int) -> std::os::raw::c_int;
+            fn dup2(oldfd: std::os::raw::c_int, newfd: std::os::raw::c_int) -> std::os::raw::c_int;
+            fn close(fd: std::os::raw::c_int) -> std::os::raw::c_int;
+        }
+
+        // RAII guard to restore stdout even if the closure panics
+        struct StdoutGuard {
+            stdout_fd: std::os::raw::c_int,
+            saved_fd: std::os::raw::c_int,
+        }
+
+        impl Drop for StdoutGuard {
+            fn drop(&mut self) {
+                extern "C" {
+                    fn dup2(
+                        oldfd: std::os::raw::c_int,
+                        newfd: std::os::raw::c_int,
+                    ) -> std::os::raw::c_int;
+                    fn close(fd: std::os::raw::c_int) -> std::os::raw::c_int;
+                }
+                unsafe {
+                    dup2(self.saved_fd, self.stdout_fd);
+                    close(self.saved_fd);
+                }
+            }
+        }
+
+        let stdout_fd = std::io::stdout().as_raw_fd();
+        let stderr_fd = std::io::stderr().as_raw_fd();
+
+        // Save original stdout fd
+        let saved_stdout = unsafe { dup(stdout_fd) };
+        if saved_stdout < 0 {
+            eprintln!("Warning: failed to save stdout fd, hook output may leak to stdout");
+            return f();
+        }
+
+        // Point stdout to stderr
+        if unsafe { dup2(stderr_fd, stdout_fd) } < 0 {
+            eprintln!("Warning: failed to redirect stdout, hook output may leak to stdout");
+            unsafe { close(saved_stdout) };
+            return f();
+        }
+
+        let _guard = StdoutGuard {
+            stdout_fd,
+            saved_fd: saved_stdout,
+        };
+
+        f()
+    }
+    #[cfg(not(unix))]
+    {
+        f()
+    }
+}
+
 fn execute_command(
     cmd: &str,
     working_dir: &Path,
@@ -185,12 +262,22 @@ fn execute_command(
     };
 
     let start = Instant::now();
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(working_dir)
-        .output()
-        .with_context(|| format!("Failed to execute command: {cmd}"))?;
+    // Inherit all stdio so hook commands run in a TTY-like environment.
+    // Temporarily redirect the parent's stdout to stderr before spawning, so
+    // the child inherits a stdout that goes to stderr. This prevents hook output
+    // from polluting the stdout stream (required for shell integration).
+    //
+    // Note: We intentionally avoid Command::output() which pipes all stdio.
+    // Some tools (e.g., mise) may be killed by system watchdogs when their
+    // stdio is fully piped in non-TTY environments.
+    let status = with_stdout_to_stderr(|| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .current_dir(working_dir)
+            .status()
+    })
+    .with_context(|| format!("Failed to execute command: {cmd}"))?;
     let elapsed = start.elapsed();
 
     // Clear spinner
@@ -216,14 +303,8 @@ fn execute_command(
         )
     );
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Hook command failed: {cmd}\n{stderr}");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if !stdout.is_empty() {
-        eprint!("{stdout}");
+    if !status.success() {
+        anyhow::bail!("Hook command failed: {cmd}");
     }
 
     Ok(())
