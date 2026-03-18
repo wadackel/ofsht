@@ -16,7 +16,6 @@ use crate::integrations;
 /// Returns an error if:
 /// - Not in a git repository
 /// - Git worktree creation fails
-/// - Hook execution fails
 /// - Zoxide registration fails
 pub fn cmd_create(
     branch: &str,
@@ -98,7 +97,7 @@ pub fn cmd_create(
         || !config.hooks.create.link.is_empty()
     {
         eprintln!("{}", color::info(color_mode, "Executing create hooks…"));
-        hooks::execute_hooks(&config.hooks.create, &worktree_path, &repo_root, color_mode)?;
+        hooks::execute_hooks_lenient(&config.hooks.create, &worktree_path, &repo_root, color_mode);
     }
 
     // Add to zoxide if enabled
