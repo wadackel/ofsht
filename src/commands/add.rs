@@ -206,9 +206,7 @@ const fn should_use_tmux(
 /// Returns an error if:
 /// - Not in a git repository
 /// - Git worktree creation fails
-/// - Hook execution fails
 /// - Zoxide registration fails
-/// - Tmux integration fails (warning only)
 pub fn cmd_new(
     branch: &str,
     start_point: Option<&str>,
@@ -320,7 +318,7 @@ pub fn cmd_new(
         || !config.hooks.create.link.is_empty()
     {
         eprintln!("{}", color::info(color_mode, "Executing create hooks…"));
-        hooks::execute_hooks(&config.hooks.create, &worktree_path, &repo_root, color_mode)?;
+        hooks::execute_hooks_lenient(&config.hooks.create, &worktree_path, &repo_root, color_mode);
     }
 
     // Add to zoxide if enabled
