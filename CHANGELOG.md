@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-18
+
+### Dependencies
+
+- Update actions/download-artifact action to v8.0.1 ([#60](https://github.com/wadackel/ofsht/pull/60))
+
+
+### Fixed
+
+- Prevent SIGKILL of hook commands by avoiding piped stdio ([#64](https://github.com/wadackel/ofsht/pull/64))
+
+
 ## [0.4.0] - 2026-03-09
 
 ### Added
