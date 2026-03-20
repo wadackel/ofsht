@@ -19,22 +19,11 @@ fn process_pr(
     repo_root: &std::path::Path,
     color_mode: color::ColorMode,
 ) -> Result<(String, Option<String>)> {
-    eprintln!(
-        "{}",
-        color::success(
-            color_mode,
-            &format!("Creating worktree for PR #{}: {}", pr.number, pr.title)
-        )
-    );
-
     // Check if it's from a fork (cross-repository PR)
     let is_fork = pr.is_cross_repository;
 
     if is_fork {
-        // Fork からの PR
-        eprintln!("{}", color::info(color_mode, "Fetching PR from fork…"));
-
-        // Fetch PR ref from GitHub without checking out
+        // Fork PR - fetch PR ref from GitHub without checking out
         let fetch_output = Command::new("git")
             .args(["fetch", "origin", &format!("refs/pull/{number}/head")])
             .current_dir(repo_root)
@@ -53,13 +42,21 @@ fn process_pr(
             .output()
             .is_ok_and(|o| o.status.success());
 
+        eprintln!(
+            "  {}",
+            color::success(
+                color_mode,
+                &format!("Fetched PR #{}: {} (fork)", pr.number, pr.title)
+            )
+        );
+
         if branch_exists {
             // Conflict: local branch already exists, use unique name
             let sanitized_ref = pr.head_ref_name.replace('/', "-");
             let unique_branch = format!("pr-{number}-{sanitized_ref}");
 
             eprintln!(
-                "{}",
+                "  {}",
                 color::warn(
                     color_mode,
                     &format!(
@@ -76,14 +73,6 @@ fn process_pr(
         }
     } else {
         // Same repository - fetch the branch
-        eprintln!(
-            "{}",
-            color::info(
-                color_mode,
-                &format!("Fetching branch: {}", pr.head_ref_name)
-            )
-        );
-
         let fetch_output = Command::new("git")
             .args(["fetch", "origin", &pr.head_ref_name])
             .current_dir(repo_root)
@@ -94,6 +83,14 @@ fn process_pr(
             let stderr = String::from_utf8_lossy(&fetch_output.stderr);
             anyhow::bail!("git fetch failed: {stderr}");
         }
+
+        eprintln!(
+            "  {}",
+            color::success(
+                color_mode,
+                &format!("Fetched PR #{}: {}", pr.number, pr.title)
+            )
+        );
 
         // Check if local branch already exists
         let branch_exists = Command::new("git")
@@ -132,11 +129,6 @@ fn resolve_github_ref(
         );
     }
 
-    eprintln!(
-        "{}",
-        color::info(color_mode, &format!("Fetching GitHub #{number} info…"))
-    );
-
     // Try issue first, then PR if issue fails
     match gh_client.issue_info(number) {
         Ok(issue) => {
@@ -156,13 +148,10 @@ fn resolve_github_ref(
                 // This is a pure issue
                 let branch_name = integrations::gh::build_issue_branch(number);
                 eprintln!(
-                    "{}",
+                    "  {}",
                     color::success(
                         color_mode,
-                        &format!(
-                            "Creating worktree for issue #{}: {}",
-                            issue.number, issue.title
-                        )
+                        &format!("Fetched issue #{}: {}", issue.number, issue.title)
                     )
                 );
                 Ok((branch_name, start_point.map(String::from)))
@@ -231,7 +220,7 @@ pub fn cmd_new(
         integrations::gh::BranchInput::Github(number) => {
             // GitHub integration is disabled
             eprintln!(
-                "{}",
+                "  {}",
                 color::warn(
                     color_mode,
                     &format!(
@@ -317,8 +306,13 @@ pub fn cmd_new(
         || !config.hooks.create.copy.is_empty()
         || !config.hooks.create.link.is_empty()
     {
-        eprintln!("{}", color::info(color_mode, "Executing create hooks…"));
-        hooks::execute_hooks_lenient(&config.hooks.create, &worktree_path, &repo_root, color_mode);
+        hooks::execute_hooks_lenient(
+            &config.hooks.create,
+            &worktree_path,
+            &repo_root,
+            color_mode,
+            "  ",
+        );
     }
 
     // Add to zoxide if enabled

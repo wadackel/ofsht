@@ -17,6 +17,10 @@ pub struct Cli {
     #[arg(long, value_name = "WHEN", global = true, ignore_case = true)]
     pub color: Option<crate::color::ColorMode>,
 
+    /// Show verbose output (e.g., full hook command output)
+    #[arg(long, short = 'v', global = true)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }

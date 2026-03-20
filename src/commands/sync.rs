@@ -59,16 +59,15 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
     let mut errors: Vec<String> = vec![];
 
     for (path, branch) in &worktrees {
-        let header = branch.as_ref().map_or_else(
-            || format!("Syncing: {path}"),
-            |b| format!("Syncing: {b} ({path})"),
-        );
-        eprintln!("{}", color::info(color_mode, header));
+        let label = branch
+            .as_ref()
+            .map_or_else(|| format!("Synced {path}"), |b| format!("Synced {b}"));
+        eprintln!("  {}", color::success(color_mode, label));
 
         let worktree_path = Path::new(path);
         if !worktree_path.exists() {
             eprintln!(
-                "{}",
+                "    {}",
                 color::warn(
                     color_mode,
                     format!("Worktree directory not found, skipping: {path}")
@@ -77,7 +76,9 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             continue;
         }
 
-        if let Err(e) = hooks::execute_hooks(&actions, worktree_path, &repo_root, color_mode) {
+        if let Err(e) =
+            hooks::execute_hooks(&actions, worktree_path, &repo_root, color_mode, "    ")
+        {
             errors.push(format!("{path}: {e}"));
         }
     }
@@ -85,7 +86,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
     if !errors.is_empty() {
         let n = errors.len();
         for err in &errors {
-            eprintln!("{}", color::warn(color_mode, format!("Error: {err}")));
+            eprintln!("    {}", color::warn(color_mode, format!("Error: {err}")));
         }
         anyhow::bail!("Sync failed for {n} worktree(s)");
     }

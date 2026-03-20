@@ -2,15 +2,16 @@
 #![allow(clippy::literal_string_with_formatting_args)]
 use anyhow::{Context, Result};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 use crate::color;
 use crate::config::HookActions;
-use crate::domain::worktree::display_path;
 
 /// Hook executor interface for running hook actions
 #[allow(dead_code)]
@@ -42,8 +43,13 @@ impl HookExecutor for RealHookExecutor {
         source_path: &Path,
     ) -> Result<()> {
         // Use ColorMode::Auto for trait implementation
-        let errors =
-            execute_hooks_impl(actions, worktree_path, source_path, color::ColorMode::Auto);
+        let errors = execute_hooks_impl(
+            actions,
+            worktree_path,
+            source_path,
+            color::ColorMode::Auto,
+            "  ",
+        );
         if errors.is_empty() {
             Ok(())
         } else {
@@ -132,8 +138,9 @@ pub fn execute_hooks(
     worktree_path: &Path,
     source_path: &Path,
     color_mode: color::ColorMode,
+    indent: &str,
 ) -> Result<()> {
-    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode);
+    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -150,10 +157,14 @@ pub fn execute_hooks_lenient(
     worktree_path: &Path,
     source_path: &Path,
     color_mode: color::ColorMode,
+    indent: &str,
 ) {
-    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode);
+    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent);
     for err in &errors {
-        eprintln!("{}", color::warn(color_mode, format!("Hook error: {err}")));
+        eprintln!(
+            "{indent}{}",
+            color::warn(color_mode, format!("Hook error: {err}"))
+        );
     }
 }
 
@@ -166,6 +177,7 @@ fn execute_hooks_impl(
     worktree_path: &Path,
     source_path: &Path,
     color_mode: color::ColorMode,
+    indent: &str,
 ) -> Vec<String> {
     let total_actions = actions.run.len() + actions.copy.len() + actions.link.len();
     let mut action_index = 0;
@@ -175,7 +187,7 @@ fn execute_hooks_impl(
     for cmd in &actions.run {
         action_index += 1;
         let is_last = action_index == total_actions;
-        if let Err(e) = execute_command(cmd, worktree_path, color_mode, is_last) {
+        if let Err(e) = execute_command(cmd, worktree_path, color_mode, is_last, indent) {
             errors.push(e.to_string());
         }
     }
@@ -184,7 +196,14 @@ fn execute_hooks_impl(
     for pattern in &actions.copy {
         action_index += 1;
         let is_last = action_index == total_actions;
-        if let Err(e) = copy_files(pattern, source_path, worktree_path, color_mode, is_last) {
+        if let Err(e) = copy_files(
+            pattern,
+            source_path,
+            worktree_path,
+            color_mode,
+            is_last,
+            indent,
+        ) {
             errors.push(e.to_string());
         }
     }
@@ -193,7 +212,14 @@ fn execute_hooks_impl(
     for pattern in &actions.link {
         action_index += 1;
         let is_last = action_index == total_actions;
-        if let Err(e) = create_symlinks(pattern, source_path, worktree_path, color_mode, is_last) {
+        if let Err(e) = create_symlinks(
+            pattern,
+            source_path,
+            worktree_path,
+            color_mode,
+            is_last,
+            indent,
+        ) {
             errors.push(e.to_string());
         }
     }
@@ -201,147 +227,109 @@ fn execute_hooks_impl(
     errors
 }
 
-/// Temporarily redirect the process's stdout to stderr, run a closure, then restore.
-///
-/// This allows child processes spawned via `Stdio::inherit()` to write to stderr
-/// instead of stdout, preventing hook output from polluting the parent's stdout
-/// stream (required for shell integration).
-///
-/// On non-Unix platforms, the closure runs without redirection.
-///
-/// Note: This mutates process-global fd 1, which is not thread-safe. This is
-/// acceptable because ofsht is a single-threaded CLI tool and hook execution
-/// is synchronous.
-fn with_stdout_to_stderr<F, T>(f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-
-        extern "C" {
-            fn dup(fd: std::os::raw::c_int) -> std::os::raw::c_int;
-            fn dup2(oldfd: std::os::raw::c_int, newfd: std::os::raw::c_int) -> std::os::raw::c_int;
-            fn close(fd: std::os::raw::c_int) -> std::os::raw::c_int;
-        }
-
-        // RAII guard to restore stdout even if the closure panics
-        struct StdoutGuard {
-            stdout_fd: std::os::raw::c_int,
-            saved_fd: std::os::raw::c_int,
-        }
-
-        impl Drop for StdoutGuard {
-            fn drop(&mut self) {
-                extern "C" {
-                    fn dup2(
-                        oldfd: std::os::raw::c_int,
-                        newfd: std::os::raw::c_int,
-                    ) -> std::os::raw::c_int;
-                    fn close(fd: std::os::raw::c_int) -> std::os::raw::c_int;
-                }
-                unsafe {
-                    dup2(self.saved_fd, self.stdout_fd);
-                    close(self.saved_fd);
-                }
-            }
-        }
-
-        let stdout_fd = std::io::stdout().as_raw_fd();
-        let stderr_fd = std::io::stderr().as_raw_fd();
-
-        // Save original stdout fd
-        let saved_stdout = unsafe { dup(stdout_fd) };
-        if saved_stdout < 0 {
-            eprintln!("Warning: failed to save stdout fd, hook output may leak to stdout");
-            return f();
-        }
-
-        // Point stdout to stderr
-        if unsafe { dup2(stderr_fd, stdout_fd) } < 0 {
-            eprintln!("Warning: failed to redirect stdout, hook output may leak to stdout");
-            unsafe { close(saved_stdout) };
-            return f();
-        }
-
-        let _guard = StdoutGuard {
-            stdout_fd,
-            saved_fd: saved_stdout,
-        };
-
-        f()
-    }
-    #[cfg(not(unix))]
-    {
-        f()
-    }
-}
+/// Number of trailing output lines to keep for failure diagnostics
+const FAILURE_TAIL_LINES: usize = 10;
 
 fn execute_command(
     cmd: &str,
     working_dir: &Path,
     color_mode: color::ColorMode,
-    is_last: bool,
+    _is_last: bool,
+    indent: &str,
 ) -> Result<()> {
-    // Show progress indicator if TTY
-    let spinner = if color_mode.should_colorize() {
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
+    let start = Instant::now();
+
+    // Merge stderr into stdout at shell level, pipe the single stream.
+    // This avoids deadlock (only one pipe to drain) and keeps output ordering natural.
+    let merged_cmd = format!("{cmd} 2>&1");
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(&merged_cmd)
+        .current_dir(working_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("Failed to execute command: {cmd}"))?;
+
+    let child_stdout = child.stdout.take().expect("stdout was piped");
+
+    // Setup MultiProgress with spinner + preview bar (TTY only)
+    let is_tty = color_mode.should_colorize();
+    let (spinner, preview_bar) = if is_tty {
+        let mp = MultiProgress::new();
+
+        let spinner = mp.add(ProgressBar::new_spinner());
+        spinner.set_style(
             ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg}")
+                .template("{prefix}{spinner:.cyan} {msg}")
                 .unwrap(),
         );
-        pb.set_message(format!("Running hook command: {cmd}"));
-        pb.enable_steady_tick(std::time::Duration::from_millis(100));
-        Some(pb)
+        spinner.set_prefix(indent.to_string());
+        spinner.set_message(cmd.to_string());
+        spinner.enable_steady_tick(Duration::from_millis(100));
+
+        let preview = mp.add(ProgressBar::new(0));
+        preview.set_style(ProgressStyle::with_template("{prefix}  {msg:.dim}").unwrap());
+        preview.set_prefix(indent.to_string());
+
+        (Some(spinner), Some(preview))
     } else {
-        None
+        (None, None)
     };
 
-    let start = Instant::now();
-    // Inherit all stdio so hook commands run in a TTY-like environment.
-    // Temporarily redirect the parent's stdout to stderr before spawning, so
-    // the child inherits a stdout that goes to stderr. This prevents hook output
-    // from polluting the stdout stream (required for shell integration).
-    //
-    // Note: We intentionally avoid Command::output() which pipes all stdio.
-    // Some tools (e.g., mise) may be killed by system watchdogs when their
-    // stdio is fully piped in non-TTY environments.
-    let status = with_stdout_to_stderr(|| {
-        Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .current_dir(working_dir)
-            .status()
-    })
-    .with_context(|| format!("Failed to execute command: {cmd}"))?;
+    // Consume output in a background thread.
+    // Updates preview bar in real-time and keeps last N lines for failure diagnostics.
+    let preview_clone = preview_bar.clone();
+    let reader_handle = std::thread::spawn(move || {
+        let reader = BufReader::new(child_stdout);
+        let mut tail = VecDeque::<String>::with_capacity(FAILURE_TAIL_LINES);
+        for line in reader.lines().map_while(Result::ok) {
+            // Update preview bar with truncated last line
+            if let Some(ref pb) = preview_clone {
+                let display = if line.len() > 60 {
+                    format!("{}…", &line[..59])
+                } else {
+                    line.clone()
+                };
+                pb.set_message(display);
+            }
+            // Ring buffer for failure diagnostics
+            if tail.len() >= FAILURE_TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+        tail
+    });
+
+    let status = child
+        .wait()
+        .with_context(|| format!("Failed to wait for command: {cmd}"))?;
     let elapsed = start.elapsed();
 
-    // Clear spinner
+    // Join reader thread to get tail buffer
+    let tail = reader_handle.join().unwrap_or_default();
+
+    // Clear spinner and preview
+    if let Some(pb) = preview_bar {
+        pb.finish_and_clear();
+    }
     if let Some(pb) = spinner {
         pb.finish_and_clear();
     }
 
-    // Print result with timing
-    let timing_info = format_duration(elapsed);
-    eprintln!(
-        "{}",
-        color::tree_item(
-            color_mode,
-            color::info(
-                color_mode,
-                format!(
-                    "Running hook command: {cmd} {}",
-                    color::dim(color_mode, timing_info)
-                )
-            ),
-            is_last,
-            1
-        )
-    );
-
-    if !status.success() {
+    if status.success() {
+        let timing_info = format_duration(elapsed);
+        eprintln!(
+            "{indent}{} {}",
+            color::success(color_mode, cmd),
+            color::dim(color_mode, timing_info)
+        );
+    } else {
+        // Show last N lines of output for diagnostics
+        for line in &tail {
+            eprintln!("{indent}  {}", color::dim(color_mode, line));
+        }
         anyhow::bail!("Hook command failed: {cmd}");
     }
 
@@ -367,25 +355,21 @@ fn copy_files(
     source_path: &Path,
     dest_path: &Path,
     color_mode: color::ColorMode,
-    is_last: bool,
+    _is_last: bool,
+    indent: &str,
 ) -> Result<()> {
     let (kind, paths) = expand_pattern(pattern, source_path)?;
 
     // If literal and not found, warn user
     if kind == PatternKind::Literal && paths.is_empty() {
         eprintln!(
-            "{}",
-            color::tree_item(
+            "{indent}{}",
+            color::warn(
                 color_mode,
-                color::warn(
-                    color_mode,
-                    format!(
-                        "Source file not found, skipping: {}",
-                        source_path.join(pattern).display()
-                    )
-                ),
-                is_last,
-                1
+                format!(
+                    "Source file not found, skipping: {}",
+                    source_path.join(pattern).display()
+                )
             )
         );
         return Ok(());
@@ -409,20 +393,8 @@ fn copy_files(
         }
 
         eprintln!(
-            "{}",
-            color::tree_item(
-                color_mode,
-                color::info(
-                    color_mode,
-                    format!(
-                        "Copying: {} → {}",
-                        display_path(&src_path),
-                        display_path(&dst_path)
-                    )
-                ),
-                is_last,
-                1
-            )
+            "{indent}{}",
+            color::success(color_mode, format!("Copied: {}", rel_path.display()))
         );
 
         if src_path.is_dir() {
@@ -545,25 +517,21 @@ fn create_symlinks(
     source_path: &Path,
     worktree_path: &Path,
     color_mode: color::ColorMode,
-    is_last: bool,
+    _is_last: bool,
+    indent: &str,
 ) -> Result<()> {
     let (kind, paths) = expand_pattern(pattern, source_path)?;
 
     // If literal and not found, warn user
     if kind == PatternKind::Literal && paths.is_empty() {
         eprintln!(
-            "{}",
-            color::tree_item(
+            "{indent}{}",
+            color::warn(
                 color_mode,
-                color::warn(
-                    color_mode,
-                    format!(
-                        "Source file not found for symlink, skipping: {}",
-                        source_path.join(pattern).display()
-                    )
-                ),
-                is_last,
-                1
+                format!(
+                    "Source file not found for symlink, skipping: {}",
+                    source_path.join(pattern).display()
+                )
             )
         );
         return Ok(());
@@ -588,26 +556,14 @@ fn create_symlinks(
 
         let result = ensure_symlink(&src_path, &dst_path)?;
         let msg = match result {
-            SymlinkResult::Created => format!(
-                "Creating symlink: {} → {}",
-                display_path(&src_path),
-                display_path(&dst_path)
-            ),
-            SymlinkResult::AlreadyCorrect => format!(
-                "Symlink already exists: {} → {}",
-                display_path(&src_path),
-                display_path(&dst_path)
-            ),
-            SymlinkResult::Replaced => format!(
-                "Replacing symlink: {} → {}",
-                display_path(&src_path),
-                display_path(&dst_path)
-            ),
+            SymlinkResult::Created | SymlinkResult::Replaced => {
+                format!("Linked: {}", rel_path.display())
+            }
+            SymlinkResult::AlreadyCorrect => {
+                format!("Linked (unchanged): {}", rel_path.display())
+            }
         };
-        eprintln!(
-            "{}",
-            color::tree_item(color_mode, color::info(color_mode, msg), is_last, 1)
-        );
+        eprintln!("{indent}{}", color::success(color_mode, msg));
     }
 
     Ok(())
@@ -779,21 +735,27 @@ mod tests {
     fn test_execute_hooks_empty() {
         let actions = HookActions::default();
         let temp_dir = std::env::temp_dir();
-        let result = execute_hooks(&actions, &temp_dir, &temp_dir, color::ColorMode::Never);
+        let result = execute_hooks(
+            &actions,
+            &temp_dir,
+            &temp_dir,
+            color::ColorMode::Never,
+            "  ",
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_execute_command_success() {
         let temp_dir = std::env::temp_dir();
-        let result = execute_command("echo test", &temp_dir, color::ColorMode::Never, false);
+        let result = execute_command("echo test", &temp_dir, color::ColorMode::Never, false, "  ");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_execute_command_failure() {
         let temp_dir = std::env::temp_dir();
-        let result = execute_command("exit 1", &temp_dir, color::ColorMode::Never, false);
+        let result = execute_command("exit 1", &temp_dir, color::ColorMode::Never, false, "  ");
         assert!(result.is_err());
     }
 
@@ -810,6 +772,7 @@ mod tests {
             &temp_dir,
             color::ColorMode::Never,
             false,
+            "  ",
         );
         assert!(result.is_ok());
     }
@@ -823,6 +786,7 @@ mod tests {
             &temp_dir,
             color::ColorMode::Never,
             false,
+            "  ",
         );
         assert!(result.is_ok()); // Should warn but not fail
     }
@@ -838,7 +802,14 @@ mod tests {
         std::fs::write(src_dir.join("test1.json"), "{}").unwrap();
         std::fs::write(src_dir.join("test2.json"), "{}").unwrap();
 
-        let result = copy_files("*.json", &src_dir, &dst_dir, color::ColorMode::Never, false);
+        let result = copy_files(
+            "*.json",
+            &src_dir,
+            &dst_dir,
+            color::ColorMode::Never,
+            false,
+            "  ",
+        );
         assert!(result.is_ok());
 
         // Verify files were copied
@@ -927,6 +898,7 @@ mod tests {
             &dst_dir,
             color::ColorMode::Never,
             false,
+            "  ",
         );
         assert!(result.is_ok(), "symlink creation failed: {result:?}");
 
@@ -1076,7 +1048,7 @@ mod tests {
             link: vec![],
         };
 
-        let errors = execute_hooks_impl(&actions, &tmp, &tmp, color::ColorMode::Never);
+        let errors = execute_hooks_impl(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
 
         // First command should have failed
         assert_eq!(errors.len(), 1);
@@ -1099,7 +1071,7 @@ mod tests {
             link: vec![],
         };
 
-        let errors = execute_hooks_impl(&actions, &tmp, &tmp, color::ColorMode::Never);
+        let errors = execute_hooks_impl(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
 
         // Both commands should have failed
         assert_eq!(errors.len(), 2);
@@ -1118,7 +1090,7 @@ mod tests {
             link: vec![],
         };
 
-        let result = execute_hooks(&actions, &tmp, &tmp, color::ColorMode::Never);
+        let result = execute_hooks(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
         assert!(result.is_err());
 
         std::fs::remove_dir_all(&tmp).ok();
@@ -1136,7 +1108,7 @@ mod tests {
         };
 
         // execute_hooks_lenient returns () — it should not panic
-        execute_hooks_lenient(&actions, &tmp, &tmp, color::ColorMode::Never);
+        execute_hooks_lenient(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
 
         std::fs::remove_dir_all(&tmp).ok();
     }

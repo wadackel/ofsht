@@ -96,8 +96,13 @@ pub fn cmd_create(
         || !config.hooks.create.copy.is_empty()
         || !config.hooks.create.link.is_empty()
     {
-        eprintln!("{}", color::info(color_mode, "Executing create hooks…"));
-        hooks::execute_hooks_lenient(&config.hooks.create, &worktree_path, &repo_root, color_mode);
+        hooks::execute_hooks_lenient(
+            &config.hooks.create,
+            &worktree_path,
+            &repo_root,
+            color_mode,
+            "  ",
+        );
     }
 
     // Add to zoxide if enabled

@@ -27,8 +27,13 @@ fn remove_worktree_internal(
             || !config.hooks.delete.copy.is_empty()
             || !config.hooks.delete.link.is_empty())
     {
-        eprintln!("{}", color::info(color_mode, "Executing delete hooks…"));
-        hooks::execute_hooks_lenient(&config.hooks.delete, worktree_path, repo_root, color_mode);
+        hooks::execute_hooks_lenient(
+            &config.hooks.delete,
+            worktree_path,
+            repo_root,
+            color_mode,
+            "  ",
+        );
     }
 
     // Remove worktree using git worktree remove
