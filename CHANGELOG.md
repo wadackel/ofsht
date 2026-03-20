@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-20
+
+### CI/CD
+
+- Auto-merge homebrew tap PR after release ([#70](https://github.com/wadackel/ofsht/pull/70))
+
+
+### Documentation
+
+- Regenerate quick-start demo GIF ([#71](https://github.com/wadackel/ofsht/pull/71))
+
+
+### Fixed
+
+- Resolve pure GitHub issues in `add` command ([#72](https://github.com/wadackel/ofsht/pull/72))
+
+
 ## [0.5.0] - 2026-03-20
 
 ### Added
