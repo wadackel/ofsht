@@ -260,7 +260,7 @@ jobs:
   # - Clear audit trail via GitHub App activity logs
   #
   # Required setup:
-  # - GitHub App with permissions: actions (write/read), contents (read)
+  # - GitHub App with permissions: actions (write/read), contents (write), pull-requests (write)
   # - App installed on both ofsht and homebrew-tap repositories
   # - OFSHT_APP_ID variable and OFSHT_APP_PRIVATE_KEY secret configured
   update-homebrew-tap:
@@ -281,6 +281,8 @@ jobs:
           private-key: ${{ secrets.OFSHT_APP_PRIVATE_KEY }}
           owner: wadackel
           repositories: homebrew-tap
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Trigger and monitor tap update workflow
         env:
@@ -353,7 +355,40 @@ jobs:
             if [ "$STATUS" = "completed" ]; then
               if [ "$CONCLUSION" = "success" ]; then
                 echo "✓ Homebrew tap update completed successfully"
-                echo "Check PR at: https://github.com/$REPO/pulls"
+
+                # Auto-merge the created PR
+                # Retry PR lookup to handle GitHub API propagation delay
+                PR_NUMBER=""
+                for i in 1 2 3; do
+                  PR_NUMBER=$(gh pr list \
+                    --repo "$REPO" \
+                    --head "bump-ofsht-${TAG}" \
+                    --state open \
+                    --json number \
+                    --jq '.[0].number // empty')
+                  if [ -n "$PR_NUMBER" ]; then
+                    break
+                  fi
+                  echo "Waiting for PR to appear... (attempt $i/3)"
+                  sleep 5
+                done
+
+                if [ -n "$PR_NUMBER" ]; then
+                  echo "Found PR #$PR_NUMBER, merging..."
+                  if gh pr merge "$PR_NUMBER" \
+                    --repo "$REPO" \
+                    --squash \
+                    --delete-branch; then
+                    echo "✓ PR #$PR_NUMBER merged successfully"
+                  else
+                    echo "::warning::Failed to merge PR #$PR_NUMBER"
+                    echo "Merge manually at: https://github.com/$REPO/pull/$PR_NUMBER"
+                  fi
+                else
+                  echo "::warning::Could not find open PR for branch bump-ofsht-${TAG}"
+                  echo "Check manually at: https://github.com/$REPO/pulls"
+                fi
+
                 exit 0
               else
                 echo "::warning::Homebrew tap update failed with conclusion: $CONCLUSION"
