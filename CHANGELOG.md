@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-20
+
+### Added
+
+- Unify hook output style and fix spinner rendering ([#67](https://github.com/wadackel/ofsht/pull/67))
+
+- Make hook execution non-blocking for add/rm/create commands ([#66](https://github.com/wadackel/ofsht/pull/66))
+
+
+### Dependencies
+
+- Update actions/cache action to v5.0.4 ([#62](https://github.com/wadackel/ofsht/pull/62))
+
+- Update actions/create-github-app-token action to v3 ([#63](https://github.com/wadackel/ofsht/pull/63))
+
+- Update jdx/mise-action action to v4 ([#61](https://github.com/wadackel/ofsht/pull/61))
+
+
+### Miscellaneous
+
+- Update SHA-pinned version comment to v3.0.0 ([#68](https://github.com/wadackel/ofsht/pull/68))
+
+
 ## [0.4.1] - 2026-03-18
 
 ### Dependencies
