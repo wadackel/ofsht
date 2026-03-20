@@ -4,6 +4,9 @@ mod client;
 mod input;
 
 pub use client::{GhClient, PrInfo, RealGhClient};
+
+#[cfg(test)]
+pub use client::{tests::MockGhClient, IssueInfo};
 pub use input::BranchInput;
 
 /// Build a branch name from an issue number

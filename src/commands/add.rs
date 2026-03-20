@@ -9,7 +9,6 @@ use crate::config;
 use crate::domain::worktree::normalize_absolute_path;
 use crate::hooks;
 use crate::integrations;
-use crate::integrations::gh::GhClient;
 use crate::integrations::tmux::TmuxLauncher;
 
 /// Process a PR and return branch name and start point
@@ -115,12 +114,12 @@ fn process_pr(
 /// Resolve branch name and start point from GitHub issue/PR
 #[allow(clippy::type_complexity)]
 fn resolve_github_ref(
+    gh_client: &impl integrations::gh::GhClient,
     number: u32,
     start_point: Option<&str>,
     repo_root: &std::path::Path,
     color_mode: color::ColorMode,
 ) -> Result<(String, Option<String>)> {
-    let gh_client = integrations::gh::RealGhClient;
     if !gh_client.is_available() {
         anyhow::bail!(
             "GitHub CLI (gh) is not installed or not available.\n\
@@ -129,23 +128,11 @@ fn resolve_github_ref(
         );
     }
 
-    // Try issue first, then PR if issue fails
-    match gh_client.issue_info(number) {
-        Ok(issue) => {
-            // Check if this is actually a pull request
-            if issue.is_pull_request {
-                // This is a PR, so fetch PR info instead
-                match gh_client.pr_info(number) {
-                    Ok(pr) => process_pr(&pr, number, repo_root, color_mode),
-                    Err(_pr_err) => {
-                        anyhow::bail!(
-                            "#{number} is not a valid pull request.\n\
-                             Please check the number and try again."
-                        );
-                    }
-                }
-            } else {
-                // This is a pure issue
+    // Try PR first, then issue if PR fails
+    match gh_client.pr_info(number) {
+        Ok(pr) => process_pr(&pr, number, repo_root, color_mode),
+        Err(_pr_err) => match gh_client.issue_info(number) {
+            Ok(issue) => {
                 let branch_name = integrations::gh::build_issue_branch(number);
                 eprintln!(
                     "  {}",
@@ -156,19 +143,13 @@ fn resolve_github_ref(
                 );
                 Ok((branch_name, start_point.map(String::from)))
             }
-        }
-        Err(_issue_err) => {
-            // Issue not found, try PR
-            match gh_client.pr_info(number) {
-                Ok(pr) => process_pr(&pr, number, repo_root, color_mode),
-                Err(_pr_err) => {
-                    anyhow::bail!(
-                        "#{number} is not a valid issue or pull request.\n\
-                         Please check the number and try again."
-                    );
-                }
+            Err(_issue_err) => {
+                anyhow::bail!(
+                    "#{number} is not a valid issue or pull request.\n\
+                     Please check the number and try again."
+                );
             }
-        }
+        },
     }
 }
 
@@ -215,7 +196,8 @@ pub fn cmd_new(
     // Resolve actual branch name and optional start point from GitHub if needed
     let (actual_branch, actual_start_point) = match branch_input {
         integrations::gh::BranchInput::Github(number) if config.integrations.gh.enabled => {
-            resolve_github_ref(number, start_point, &repo_root, color_mode)?
+            let gh_client = integrations::gh::RealGhClient;
+            resolve_github_ref(&gh_client, number, start_point, &repo_root, color_mode)?
         }
         integrations::gh::BranchInput::Github(number) => {
             // GitHub integration is disabled
@@ -383,5 +365,73 @@ mod tests {
         use config::TmuxBehavior;
         // behavior=Never disables tmux (unless --tmux is specified)
         assert!(!should_use_tmux(TmuxBehavior::Never, false, false));
+    }
+
+    #[test]
+    fn test_resolve_github_ref_issue_path() {
+        let mock = integrations::gh::MockGhClient::new()
+            .with_pr_error("not found")
+            .with_issue(integrations::gh::IssueInfo {
+                number: 33,
+                title: "Test issue".to_string(),
+                url: "https://github.com/owner/repo/issues/33".to_string(),
+            });
+
+        let result = resolve_github_ref(
+            &mock,
+            33,
+            None,
+            std::path::Path::new("/tmp"),
+            color::ColorMode::Never,
+        );
+
+        let (branch, start_point) = result.unwrap();
+        assert_eq!(branch, "issue-33");
+        assert!(start_point.is_none());
+    }
+
+    #[test]
+    fn test_resolve_github_ref_issue_path_with_start_point() {
+        let mock = integrations::gh::MockGhClient::new()
+            .with_pr_error("not found")
+            .with_issue(integrations::gh::IssueInfo {
+                number: 33,
+                title: "Test issue".to_string(),
+                url: "https://github.com/owner/repo/issues/33".to_string(),
+            });
+
+        let result = resolve_github_ref(
+            &mock,
+            33,
+            Some("develop"),
+            std::path::Path::new("/tmp"),
+            color::ColorMode::Never,
+        );
+
+        let (branch, start_point) = result.unwrap();
+        assert_eq!(branch, "issue-33");
+        assert_eq!(start_point.as_deref(), Some("develop"));
+    }
+
+    #[test]
+    fn test_resolve_github_ref_both_fail() {
+        let mock = integrations::gh::MockGhClient::new()
+            .with_pr_error("no pr")
+            .with_issue_error("no issue");
+
+        let result = resolve_github_ref(
+            &mock,
+            999,
+            None,
+            std::path::Path::new("/tmp"),
+            color::ColorMode::Never,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("not a valid issue or pull request"),
+            "unexpected error: {err}"
+        );
     }
 }
