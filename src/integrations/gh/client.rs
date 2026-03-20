@@ -12,8 +12,6 @@ pub struct IssueInfo {
     pub title: String,
     #[allow(dead_code)]
     pub url: String,
-    /// Whether this is actually a pull request (GitHub treats PRs as special issues)
-    pub is_pull_request: bool,
 }
 
 /// Information about a GitHub pull request
@@ -52,7 +50,7 @@ impl GhClient for RealGhClient {
                 "view",
                 &number.to_string(),
                 "--json",
-                "number,title,url,isPullRequest",
+                "number,title,url",
             ])
             .output()
             .context("Failed to execute gh command")?;
@@ -113,7 +111,14 @@ pub mod tests {
         available: bool,
     }
 
+    impl Default for MockGhClient {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl MockGhClient {
+        #[must_use]
         pub fn new() -> Self {
             Self {
                 issue_result: None,
@@ -122,27 +127,31 @@ pub mod tests {
             }
         }
 
+        #[must_use]
         pub fn with_issue(mut self, issue: IssueInfo) -> Self {
             self.issue_result = Some(MockResult::Ok(issue));
             self
         }
 
+        #[must_use]
         pub fn with_pr(mut self, pr: PrInfo) -> Self {
             self.pr_result = Some(MockResult::Ok(pr));
             self
         }
 
+        #[must_use]
         pub fn with_issue_error(mut self, error: &str) -> Self {
             self.issue_result = Some(MockResult::Err(error.to_string()));
             self
         }
 
-        #[allow(dead_code)]
+        #[must_use]
         pub fn with_pr_error(mut self, error: &str) -> Self {
             self.pr_result = Some(MockResult::Err(error.to_string()));
             self
         }
 
+        #[must_use]
         pub fn unavailable(mut self) -> Self {
             self.available = false;
             self
@@ -177,13 +186,11 @@ pub mod tests {
             number: 123,
             title: "Test issue".to_string(),
             url: "https://github.com/owner/repo/issues/123".to_string(),
-            is_pull_request: false,
         });
 
         let info = client.issue_info(123).unwrap();
         assert_eq!(info.number, 123);
         assert_eq!(info.title, "Test issue");
-        assert!(!info.is_pull_request);
     }
 
     #[test]
