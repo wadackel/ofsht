@@ -281,6 +281,7 @@ jobs:
           private-key: ${{ secrets.OFSHT_APP_PRIVATE_KEY }}
           owner: wadackel
           repositories: homebrew-tap
+          permission-actions: write
           permission-contents: write
           permission-pull-requests: write
 
