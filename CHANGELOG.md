@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-03-20
+
+### Fixed
+
+- Add actions write permission for homebrew tap workflow dispatch ([#74](https://github.com/wadackel/ofsht/pull/74))
+
+
 ## [0.5.1] - 2026-03-20
 
 ### CI/CD
