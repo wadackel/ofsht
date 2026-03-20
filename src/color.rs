@@ -253,6 +253,7 @@ pub fn dim<D: fmt::Display>(mode: ColorMode, text: D) -> DimmedText<D> {
 }
 
 /// Tree item formatting for nested output (hooks, etc.)
+#[allow(dead_code)]
 pub struct TreeItem<D> {
     mode: ColorMode,
     message: D,
@@ -274,7 +275,7 @@ impl<D: fmt::Display> fmt::Display for TreeItem<D> {
 }
 
 /// Format a tree item for nested output
-#[allow(clippy::missing_const_for_fn)]
+#[allow(clippy::missing_const_for_fn, dead_code)]
 pub fn tree_item<D: fmt::Display>(
     mode: ColorMode,
     message: D,
