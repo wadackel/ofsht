@@ -272,7 +272,7 @@ jobs:
       contents: read  # Minimal permissions (GitHub App token handles homebrew-tap access)
     steps:
       # Generate a short-lived token (1-hour expiration) scoped to homebrew-tap repository
-      # SHA-pinned to v2.2.0 for supply chain security
+      # SHA-pinned to v3.0.0 for supply chain security
       - name: Generate GitHub App token
         id: generate-token
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
