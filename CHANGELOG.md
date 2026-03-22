@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-22
+
+### Added
+
+- Unify rm/sync/create TUI with shared MultiProgress ([#76](https://github.com/wadackel/ofsht/pull/76))
+
+
+### Changed
+
+- Standardize output indent hierarchy and add create/add spinners ([#77](https://github.com/wadackel/ofsht/pull/77))
+
+
 ## [0.5.2] - 2026-03-20
 
 ### Fixed
