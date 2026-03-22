@@ -65,7 +65,7 @@ fn test_rm_multiple_branches() {
         .current_dir(repo_dir.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("Removed worktree").count(2));
+        .stderr(predicate::str::contains("Removed feature-").count(2));
 
     // Verify both worktrees were removed
     assert!(!worktree_a_path.exists());
@@ -149,7 +149,7 @@ fn test_rm_multiple_branches_from_worktree() {
         .current_dir(&worktree_a_path)
         .assert()
         .success()
-        .stderr(predicate::str::contains("Removed worktree").count(2));
+        .stderr(predicate::str::contains("Removed feature-").count(2));
 
     // Verify both worktrees were removed
     assert!(!worktree_a_path.exists());
@@ -226,7 +226,7 @@ fn test_rm_duplicate_targets() {
         .assert()
         .success()
         // Should only remove once
-        .stderr(predicate::str::contains("Removed worktree").count(1))
+        .stderr(predicate::str::contains("Removed feature-a").count(1))
         // Should warn about duplicate
         .stderr(predicate::str::contains("Duplicate").or(predicate::str::contains("already")));
 
@@ -306,7 +306,7 @@ fn test_rm_current_with_others() {
         .assert()
         .success()
         .stdout(predicate::str::contains(repo_dir.path().to_str().unwrap()))
-        .stderr(predicate::str::contains("Removed worktree").count(2));
+        .stderr(predicate::str::contains("Removed feature-").count(2));
 
     // Verify all worktrees were removed
     assert!(!worktree_a_path.exists());
@@ -388,7 +388,7 @@ fn test_rm_alias_and_dot() {
         // Should warn about duplicate
         .stderr(predicate::str::contains("Duplicate"))
         // Should only remove once
-        .stderr(predicate::str::contains("Removed worktree").count(1));
+        .stderr(predicate::str::contains("Removed feature-a").count(1));
 
     // Verify worktree was removed
     assert!(!worktree_a_path.exists());
@@ -543,8 +543,7 @@ fn test_rm_prunable_worktree_by_branch_name() {
         .current_dir(repo_dir.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("Removed worktree"))
-        .stderr(predicate::str::contains("test-prunable"));
+        .stderr(predicate::str::contains("Removed test-prunable"));
 
     // Verify worktree list no longer contains the entry
     let git_output = Command::new("git")
@@ -633,8 +632,7 @@ fn test_rm_prunable_worktree_by_absolute_path() {
         .current_dir(repo_dir.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("Removed worktree"))
-        .stderr(predicate::str::contains("test-prunable-path"));
+        .stderr(predicate::str::contains("Removed test-prunable-path"));
 
     // Verify worktree list no longer contains the entry
     let git_output = Command::new("git")
@@ -722,8 +720,7 @@ fn test_rm_prunable_worktree_by_relative_path() {
         .current_dir(repo_dir.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("Removed worktree"))
-        .stderr(predicate::str::contains("test-prunable-rel"));
+        .stderr(predicate::str::contains("Removed test-prunable-rel"));
 
     // Verify worktree list no longer contains the entry
     let git_output = Command::new("git")

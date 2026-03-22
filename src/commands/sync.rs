@@ -1,8 +1,10 @@
 //! Sync command - Re-apply hook file operations to existing worktrees
 
 use anyhow::Result;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use crate::color;
 use crate::commands::common::{get_main_repo_root, parse_all_worktrees};
@@ -14,6 +16,7 @@ use crate::hooks;
 /// # Errors
 /// Returns an error if not in a git repository, config loading fails,
 /// git worktree list fails, or any hook execution fails.
+#[allow(clippy::too_many_lines, clippy::missing_panics_doc)]
 pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode) -> Result<()> {
     let repo_root = get_main_repo_root()?;
     let cfg = config::Config::load_from_repo_root(&repo_root)?;
@@ -56,37 +59,85 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
         return Ok(());
     }
 
+    let mp = MultiProgress::new();
+    let is_tty = color_mode.should_colorize();
     let mut errors: Vec<String> = vec![];
 
     for (path, branch) in &worktrees {
-        let label = branch
-            .as_ref()
-            .map_or_else(|| format!("Synced {path}"), |b| format!("Synced {b}"));
-        eprintln!("  {}", color::success(color_mode, label));
+        let label = branch.as_deref().unwrap_or(path.as_str());
+
+        // Header spinner (TTY) or pre-printed header (non-TTY)
+        let header_pb = if is_tty {
+            let pb = mp.add(ProgressBar::new_spinner());
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("  {spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+            pb.set_message(format!("Syncing {label}"));
+            pb.enable_steady_tick(Duration::from_millis(100));
+            Some(pb)
+        } else {
+            eprintln!(
+                "  {}",
+                color::success(color_mode, format!("Synced {label}"))
+            );
+            None
+        };
 
         let worktree_path = Path::new(path);
         if !worktree_path.exists() {
-            eprintln!(
-                "    {}",
-                color::warn(
-                    color_mode,
-                    format!("Worktree directory not found, skipping: {path}")
-                )
+            // Finish header before warning
+            if let Some(pb) = header_pb {
+                pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
+                pb.finish_with_message(format!(
+                    "  {}",
+                    color::success(color_mode, format!("Synced {label}"))
+                ));
+            }
+            hooks::emit_line(
+                &mp,
+                is_tty,
+                format!(
+                    "    {}",
+                    color::warn(
+                        color_mode,
+                        format!("Worktree directory not found, skipping: {path}")
+                    )
+                ),
             );
             continue;
         }
 
-        if let Err(e) =
-            hooks::execute_hooks(&actions, worktree_path, &repo_root, color_mode, "    ")
-        {
+        if let Err(e) = hooks::execute_hooks_with_mp(
+            &actions,
+            worktree_path,
+            &repo_root,
+            color_mode,
+            "    ",
+            &mp,
+        ) {
             errors.push(format!("{path}: {e}"));
+        }
+
+        // Finish header: Syncing → Synced
+        if let Some(pb) = header_pb {
+            pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
+            pb.finish_with_message(format!(
+                "  {}",
+                color::success(color_mode, format!("Synced {label}"))
+            ));
         }
     }
 
     if !errors.is_empty() {
         let n = errors.len();
         for err in &errors {
-            eprintln!("    {}", color::warn(color_mode, format!("Error: {err}")));
+            hooks::emit_line(
+                &mp,
+                is_tty,
+                format!("    {}", color::warn(color_mode, format!("Error: {err}"))),
+            );
         }
         anyhow::bail!("Sync failed for {n} worktree(s)");
     }

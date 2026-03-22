@@ -42,19 +42,38 @@ impl HookExecutor for RealHookExecutor {
         worktree_path: &Path,
         source_path: &Path,
     ) -> Result<()> {
-        // Use ColorMode::Auto for trait implementation
+        let mp = MultiProgress::new();
         let errors = execute_hooks_impl(
             actions,
             worktree_path,
             source_path,
             color::ColorMode::Auto,
             "  ",
+            &mp,
         );
         if errors.is_empty() {
             Ok(())
         } else {
             anyhow::bail!("{}", errors.join("; "))
         }
+    }
+}
+
+/// Emit a static line into a `MultiProgress`, preserving bar ordering in TTY mode.
+///
+/// In TTY mode, creates a bar that immediately finishes with the message,
+/// keeping it positioned correctly relative to active spinners.
+/// In non-TTY mode, simply prints to stderr.
+#[allow(clippy::missing_panics_doc)]
+pub fn emit_line(mp: &MultiProgress, is_tty: bool, msg: String) {
+    if is_tty {
+        let bar = mp.add(ProgressBar::new(0));
+        // set_style MUST be called before finish_with_message —
+        // the default bar style has no {msg} placeholder.
+        bar.set_style(ProgressStyle::with_template("{msg}").unwrap());
+        bar.finish_with_message(msg);
+    } else {
+        eprintln!("{msg}");
     }
 }
 
@@ -133,6 +152,7 @@ fn expand_glob(globset: &GlobSet, base: &Path) -> Vec<PathBuf> {
 ///
 /// Returns `Err` if any hook action fails, after executing all actions.
 /// All errors are collected and joined with "; ".
+#[allow(dead_code)]
 pub fn execute_hooks(
     actions: &HookActions,
     worktree_path: &Path,
@@ -140,7 +160,23 @@ pub fn execute_hooks(
     color_mode: color::ColorMode,
     indent: &str,
 ) -> Result<()> {
-    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent);
+    let mp = MultiProgress::new();
+    execute_hooks_with_mp(actions, worktree_path, source_path, color_mode, indent, &mp)
+}
+
+/// Execute hook actions with a shared `MultiProgress`.
+///
+/// Use this variant when the caller manages its own header spinner
+/// in the same `MultiProgress`, ensuring correct bar ordering.
+pub fn execute_hooks_with_mp(
+    actions: &HookActions,
+    worktree_path: &Path,
+    source_path: &Path,
+    color_mode: color::ColorMode,
+    indent: &str,
+    mp: &MultiProgress,
+) -> Result<()> {
+    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent, mp);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -159,11 +195,32 @@ pub fn execute_hooks_lenient(
     color_mode: color::ColorMode,
     indent: &str,
 ) {
-    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent);
+    let mp = MultiProgress::new();
+    execute_hooks_lenient_with_mp(actions, worktree_path, source_path, color_mode, indent, &mp);
+}
+
+/// Execute hook actions leniently with a shared `MultiProgress`.
+///
+/// Use this variant when the caller manages its own header spinner
+/// in the same `MultiProgress`, ensuring correct bar ordering.
+pub fn execute_hooks_lenient_with_mp(
+    actions: &HookActions,
+    worktree_path: &Path,
+    source_path: &Path,
+    color_mode: color::ColorMode,
+    indent: &str,
+    mp: &MultiProgress,
+) {
+    let is_tty = color_mode.should_colorize();
+    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent, mp);
     for err in &errors {
-        eprintln!(
-            "{indent}{}",
-            color::warn(color_mode, format!("Hook error: {err}"))
+        emit_line(
+            mp,
+            is_tty,
+            format!(
+                "{indent}{}",
+                color::warn(color_mode, format!("Hook error: {err}"))
+            ),
         );
     }
 }
@@ -178,6 +235,7 @@ fn execute_hooks_impl(
     source_path: &Path,
     color_mode: color::ColorMode,
     indent: &str,
+    mp: &MultiProgress,
 ) -> Vec<String> {
     let total_actions = actions.run.len() + actions.copy.len() + actions.link.len();
     let mut action_index = 0;
@@ -187,7 +245,7 @@ fn execute_hooks_impl(
     for cmd in &actions.run {
         action_index += 1;
         let is_last = action_index == total_actions;
-        if let Err(e) = execute_command(cmd, worktree_path, color_mode, is_last, indent) {
+        if let Err(e) = execute_command(cmd, worktree_path, color_mode, is_last, indent, mp) {
             errors.push(e.to_string());
         }
     }
@@ -203,6 +261,7 @@ fn execute_hooks_impl(
             color_mode,
             is_last,
             indent,
+            mp,
         ) {
             errors.push(e.to_string());
         }
@@ -219,6 +278,7 @@ fn execute_hooks_impl(
             color_mode,
             is_last,
             indent,
+            mp,
         ) {
             errors.push(e.to_string());
         }
@@ -236,6 +296,7 @@ fn execute_command(
     color_mode: color::ColorMode,
     _is_last: bool,
     indent: &str,
+    mp: &MultiProgress,
 ) -> Result<()> {
     let start = Instant::now();
 
@@ -253,11 +314,9 @@ fn execute_command(
 
     let child_stdout = child.stdout.take().expect("stdout was piped");
 
-    // Setup MultiProgress with spinner + preview bar (TTY only)
+    // Setup spinner + preview bar in the shared MultiProgress (TTY only)
     let is_tty = color_mode.should_colorize();
     let (spinner, preview_bar) = if is_tty {
-        let mp = MultiProgress::new();
-
         let spinner = mp.add(ProgressBar::new_spinner());
         spinner.set_style(
             ProgressStyle::default_spinner()
@@ -310,25 +369,38 @@ fn execute_command(
     // Join reader thread to get tail buffer
     let tail = reader_handle.join().unwrap_or_default();
 
-    // Clear spinner and preview
+    // Clear preview bar
     if let Some(pb) = preview_bar {
-        pb.finish_and_clear();
-    }
-    if let Some(pb) = spinner {
         pb.finish_and_clear();
     }
 
     if status.success() {
         let timing_info = format_duration(elapsed);
-        eprintln!(
+        let msg = format!(
             "{indent}{} {}",
             color::success(color_mode, cmd),
             color::dim(color_mode, timing_info)
         );
+        if let Some(pb) = spinner {
+            // TTY: transform spinner into completion message (stays in place)
+            pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
+            pb.finish_with_message(msg);
+        } else {
+            // non-TTY: print directly
+            eprintln!("{msg}");
+        }
     } else {
+        // Clear spinner on failure
+        if let Some(pb) = spinner {
+            pb.finish_and_clear();
+        }
         // Show last N lines of output for diagnostics
         for line in &tail {
-            eprintln!("{indent}  {}", color::dim(color_mode, line));
+            emit_line(
+                mp,
+                is_tty,
+                format!("{indent}  {}", color::dim(color_mode, line)),
+            );
         }
         anyhow::bail!("Hook command failed: {cmd}");
     }
@@ -357,20 +429,26 @@ fn copy_files(
     color_mode: color::ColorMode,
     _is_last: bool,
     indent: &str,
+    mp: &MultiProgress,
 ) -> Result<()> {
+    let is_tty = color_mode.should_colorize();
     let (kind, paths) = expand_pattern(pattern, source_path)?;
 
     // If literal and not found, warn user
     if kind == PatternKind::Literal && paths.is_empty() {
-        eprintln!(
-            "{indent}{}",
-            color::warn(
-                color_mode,
-                format!(
-                    "Source file not found, skipping: {}",
-                    source_path.join(pattern).display()
+        emit_line(
+            mp,
+            is_tty,
+            format!(
+                "{indent}{}",
+                color::warn(
+                    color_mode,
+                    format!(
+                        "Source file not found, skipping: {}",
+                        source_path.join(pattern).display()
+                    )
                 )
-            )
+            ),
         );
         return Ok(());
     }
@@ -392,9 +470,13 @@ fn copy_files(
             })?;
         }
 
-        eprintln!(
-            "{indent}{}",
-            color::success(color_mode, format!("Copied: {}", rel_path.display()))
+        emit_line(
+            mp,
+            is_tty,
+            format!(
+                "{indent}{}",
+                color::success(color_mode, format!("Copied: {}", rel_path.display()))
+            ),
         );
 
         if src_path.is_dir() {
@@ -519,20 +601,26 @@ fn create_symlinks(
     color_mode: color::ColorMode,
     _is_last: bool,
     indent: &str,
+    mp: &MultiProgress,
 ) -> Result<()> {
+    let is_tty = color_mode.should_colorize();
     let (kind, paths) = expand_pattern(pattern, source_path)?;
 
     // If literal and not found, warn user
     if kind == PatternKind::Literal && paths.is_empty() {
-        eprintln!(
-            "{indent}{}",
-            color::warn(
-                color_mode,
-                format!(
-                    "Source file not found for symlink, skipping: {}",
-                    source_path.join(pattern).display()
+        emit_line(
+            mp,
+            is_tty,
+            format!(
+                "{indent}{}",
+                color::warn(
+                    color_mode,
+                    format!(
+                        "Source file not found for symlink, skipping: {}",
+                        source_path.join(pattern).display()
+                    )
                 )
-            )
+            ),
         );
         return Ok(());
     }
@@ -563,7 +651,11 @@ fn create_symlinks(
                 format!("Linked (unchanged): {}", rel_path.display())
             }
         };
-        eprintln!("{indent}{}", color::success(color_mode, msg));
+        emit_line(
+            mp,
+            is_tty,
+            format!("{indent}{}", color::success(color_mode, msg)),
+        );
     }
 
     Ok(())
@@ -748,14 +840,28 @@ mod tests {
     #[test]
     fn test_execute_command_success() {
         let temp_dir = std::env::temp_dir();
-        let result = execute_command("echo test", &temp_dir, color::ColorMode::Never, false, "  ");
+        let result = execute_command(
+            "echo test",
+            &temp_dir,
+            color::ColorMode::Never,
+            false,
+            "  ",
+            &MultiProgress::new(),
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_execute_command_failure() {
         let temp_dir = std::env::temp_dir();
-        let result = execute_command("exit 1", &temp_dir, color::ColorMode::Never, false, "  ");
+        let result = execute_command(
+            "exit 1",
+            &temp_dir,
+            color::ColorMode::Never,
+            false,
+            "  ",
+            &MultiProgress::new(),
+        );
         assert!(result.is_err());
     }
 
@@ -773,6 +879,7 @@ mod tests {
             color::ColorMode::Never,
             false,
             "  ",
+            &MultiProgress::new(),
         );
         assert!(result.is_ok());
     }
@@ -787,6 +894,7 @@ mod tests {
             color::ColorMode::Never,
             false,
             "  ",
+            &MultiProgress::new(),
         );
         assert!(result.is_ok()); // Should warn but not fail
     }
@@ -809,6 +917,7 @@ mod tests {
             color::ColorMode::Never,
             false,
             "  ",
+            &MultiProgress::new(),
         );
         assert!(result.is_ok());
 
@@ -899,6 +1008,7 @@ mod tests {
             color::ColorMode::Never,
             false,
             "  ",
+            &MultiProgress::new(),
         );
         assert!(result.is_ok(), "symlink creation failed: {result:?}");
 
@@ -1048,7 +1158,14 @@ mod tests {
             link: vec![],
         };
 
-        let errors = execute_hooks_impl(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
+        let errors = execute_hooks_impl(
+            &actions,
+            &tmp,
+            &tmp,
+            color::ColorMode::Never,
+            "  ",
+            &MultiProgress::new(),
+        );
 
         // First command should have failed
         assert_eq!(errors.len(), 1);
@@ -1071,7 +1188,14 @@ mod tests {
             link: vec![],
         };
 
-        let errors = execute_hooks_impl(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
+        let errors = execute_hooks_impl(
+            &actions,
+            &tmp,
+            &tmp,
+            color::ColorMode::Never,
+            "  ",
+            &MultiProgress::new(),
+        );
 
         // Both commands should have failed
         assert_eq!(errors.len(), 2);

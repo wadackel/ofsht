@@ -1,8 +1,10 @@
 //! Remove command - Remove one or multiple worktrees
 
 use anyhow::{Context, Result};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashSet;
 use std::process::Command;
+use std::time::Duration;
 
 use crate::color;
 use crate::commands::common::{get_main_repo_root, parse_all_worktrees, resolve_worktree_target};
@@ -17,22 +19,47 @@ use crate::integrations::fzf::FzfPicker;
 fn remove_worktree_internal(
     worktree_path: &std::path::Path,
     branch_name: Option<&str>,
+    label: &str,
     config: &config::Config,
     repo_root: &std::path::Path,
     color_mode: color::ColorMode,
+    mp: &MultiProgress,
 ) -> Result<()> {
-    // Execute delete hooks before removing the worktree
+    let is_tty = color_mode.should_colorize();
+
+    // Header spinner (TTY) or pre-printed header (non-TTY)
+    let header_pb = if is_tty {
+        let pb = mp.add(ProgressBar::new_spinner());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("  {spinner:.cyan} {msg}")
+                .unwrap(),
+        );
+        pb.set_message(format!("Removing {label}"));
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        // non-TTY: print header before hooks (sync pattern)
+        eprintln!(
+            "  {}",
+            color::success(color_mode, format!("Removed {label}"))
+        );
+        None
+    };
+
+    // Execute delete hooks before removing the worktree (indent 4sp for nesting)
     if worktree_path.exists()
         && (!config.hooks.delete.run.is_empty()
             || !config.hooks.delete.copy.is_empty()
             || !config.hooks.delete.link.is_empty())
     {
-        hooks::execute_hooks_lenient(
+        hooks::execute_hooks_lenient_with_mp(
             &config.hooks.delete,
             worktree_path,
             repo_root,
             color_mode,
-            "  ",
+            "    ",
+            mp,
         );
     }
 
@@ -45,17 +72,22 @@ fn remove_worktree_internal(
         .context("Failed to execute git worktree remove")?;
 
     if !output.status.success() {
+        // Clear header spinner on error
+        if let Some(pb) = header_pb {
+            pb.finish_and_clear();
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git worktree remove failed: {stderr}");
     }
 
-    eprintln!(
-        "{}",
-        color::success(
-            color_mode,
-            format!("Removed worktree: {}", display_path(worktree_path))
-        )
-    );
+    // Finish header: Removing → Removed
+    if let Some(pb) = header_pb {
+        pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
+        pb.finish_with_message(format!(
+            "  {}",
+            color::success(color_mode, format!("Removed {label}"))
+        ));
+    }
 
     // Try to delete the branch (optional, may fail if branch doesn't exist)
     if let Some(branch) = branch_name {
@@ -66,9 +98,13 @@ fn remove_worktree_internal(
             .context("Failed to execute git branch -D")?;
 
         if branch_output.status.success() {
-            eprintln!(
-                "{}",
-                color::success(color_mode, format!("Deleted branch: {branch}"))
+            hooks::emit_line(
+                mp,
+                is_tty,
+                format!(
+                    "    {}",
+                    color::success(color_mode, format!("Deleted branch: {branch}"))
+                ),
             );
         }
     }
@@ -141,6 +177,8 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
         targets.to_vec()
     };
 
+    let mp = MultiProgress::new();
+
     // First, resolve all targets to detect duplicates and validate them
     let mut non_current_removals = Vec::new();
     let mut current_removal: Option<(std::path::PathBuf, std::path::PathBuf, Option<String>)> =
@@ -157,7 +195,7 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
                     if seen_paths.contains(&canonical_path) {
                         non_current_removals.retain(|(path, _, _)| path != &canonical_path);
                         eprintln!(
-                            "{}",
+                            "  {}",
                             color::warn(
                                 color_mode,
                                 format!(
@@ -174,7 +212,7 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
                     // Check for duplicates (non-current targets)
                     if seen_paths.contains(&canonical_path) {
                         eprintln!(
-                            "{}",
+                            "  {}",
                             color::warn(
                                 color_mode,
                                 format!(
@@ -197,24 +235,32 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
     }
 
     // Execute removals: non-current first, then current (if present)
-    for (_, worktree_path, branch_name) in non_current_removals {
+    for (_, worktree_path, branch_name) in &non_current_removals {
+        let path_label = display_path(worktree_path);
+        let label = branch_name.as_deref().unwrap_or(&path_label);
         remove_worktree_internal(
-            &worktree_path,
+            worktree_path,
             branch_name.as_deref(),
+            label,
             &config,
             &repo_root,
             color_mode,
+            &mp,
         )?;
     }
 
     // Remove current worktree last (if requested)
-    if let Some((_, worktree_path, branch_name)) = current_removal {
+    if let Some((_, worktree_path, branch_name)) = &current_removal {
+        let path_label = display_path(worktree_path);
+        let label = branch_name.as_deref().unwrap_or(&path_label);
         remove_worktree_internal(
-            &worktree_path,
+            worktree_path,
             branch_name.as_deref(),
+            label,
             &config,
             &repo_root,
             color_mode,
+            &mp,
         )?;
 
         // Print main worktree path for shell wrapper
