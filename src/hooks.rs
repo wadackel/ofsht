@@ -188,6 +188,7 @@ pub fn execute_hooks_with_mp(
 ///
 /// Hooks are supplementary automation — failures should not block the primary
 /// operation (worktree creation, removal, etc.).
+#[cfg(test)]
 pub fn execute_hooks_lenient(
     actions: &HookActions,
     worktree_path: &Path,

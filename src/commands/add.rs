@@ -1,7 +1,9 @@
 //! Add command - Create new worktrees with GitHub integration and tmux support
 
 use anyhow::{Context, Result};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::process::Command;
+use std::time::Duration;
 
 use crate::color;
 use crate::commands::common::get_main_repo_root;
@@ -42,7 +44,7 @@ fn process_pr(
             .is_ok_and(|o| o.status.success());
 
         eprintln!(
-            "  {}",
+            "{}",
             color::success(
                 color_mode,
                 &format!("Fetched PR #{}: {} (fork)", pr.number, pr.title)
@@ -55,7 +57,7 @@ fn process_pr(
             let unique_branch = format!("pr-{number}-{sanitized_ref}");
 
             eprintln!(
-                "  {}",
+                "{}",
                 color::warn(
                     color_mode,
                     &format!(
@@ -84,7 +86,7 @@ fn process_pr(
         }
 
         eprintln!(
-            "  {}",
+            "{}",
             color::success(
                 color_mode,
                 &format!("Fetched PR #{}: {}", pr.number, pr.title)
@@ -135,7 +137,7 @@ fn resolve_github_ref(
             Ok(issue) => {
                 let branch_name = integrations::gh::build_issue_branch(number);
                 eprintln!(
-                    "  {}",
+                    "{}",
                     color::success(
                         color_mode,
                         &format!("Fetched issue #{}: {}", issue.number, issue.title)
@@ -177,6 +179,7 @@ const fn should_use_tmux(
 /// - Not in a git repository
 /// - Git worktree creation fails
 /// - Zoxide registration fails
+#[allow(clippy::too_many_lines, clippy::missing_panics_doc)]
 pub fn cmd_new(
     branch: &str,
     start_point: Option<&str>,
@@ -202,7 +205,7 @@ pub fn cmd_new(
         integrations::gh::BranchInput::Github(number) => {
             // GitHub integration is disabled
             eprintln!(
-                "  {}",
+                "{}",
                 color::warn(
                     color_mode,
                     &format!(
@@ -247,6 +250,24 @@ pub fn cmd_new(
         repo_root.join(&path_template)
     };
 
+    let mp = MultiProgress::new();
+    let is_tty = color_mode.should_colorize();
+
+    // Header spinner (TTY) — after GH fetch, before git worktree add
+    let header_pb = if is_tty {
+        let pb = mp.add(ProgressBar::new_spinner());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.cyan} {msg}")
+                .unwrap(),
+        );
+        pb.set_message(format!("Adding {branch}"));
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        None
+    };
+
     // Create worktree using git worktree add
     let mut cmd = Command::new("git");
 
@@ -279,8 +300,16 @@ pub fn cmd_new(
     let output = cmd.output().context("Failed to execute git worktree add")?;
 
     if !output.status.success() {
+        if let Some(pb) = header_pb {
+            pb.finish_and_clear();
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git worktree add failed: {stderr}");
+    }
+
+    // non-TTY: print header before hooks (rm/sync pattern)
+    if !is_tty {
+        eprintln!("{}", color::success(color_mode, format!("Added {branch}")));
     }
 
     // Execute create hooks
@@ -288,13 +317,23 @@ pub fn cmd_new(
         || !config.hooks.create.copy.is_empty()
         || !config.hooks.create.link.is_empty()
     {
-        hooks::execute_hooks_lenient(
+        hooks::execute_hooks_lenient_with_mp(
             &config.hooks.create,
             &worktree_path,
             &repo_root,
             color_mode,
             "  ",
+            &mp,
         );
+    }
+
+    // Finish header: Adding → Added
+    if let Some(pb) = header_pb {
+        pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
+        pb.finish_with_message(format!(
+            "{}",
+            color::success(color_mode, format!("Added {branch}"))
+        ));
     }
 
     // Add to zoxide if enabled

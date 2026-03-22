@@ -1,7 +1,9 @@
 //! Create command - Simple worktree creation without extra features
 
 use anyhow::{Context, Result};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::process::Command;
+use std::time::Duration;
 
 use crate::color;
 use crate::commands::common::get_main_repo_root;
@@ -17,6 +19,7 @@ use crate::integrations;
 /// - Not in a git repository
 /// - Git worktree creation fails
 /// - Zoxide registration fails
+#[allow(clippy::missing_panics_doc)]
 pub fn cmd_create(
     branch: &str,
     start_point: Option<&str>,
@@ -76,33 +79,59 @@ pub fn cmd_create(
         }
     }
 
+    let mp = MultiProgress::new();
+    let is_tty = color_mode.should_colorize();
+
+    // Header spinner (TTY) or deferred header (non-TTY)
+    let header_pb = if is_tty {
+        let pb = mp.add(ProgressBar::new_spinner());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.cyan} {msg}")
+                .unwrap(),
+        );
+        pb.set_message(format!("Creating {branch}"));
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        None
+    };
+
     let output = cmd.output().context("Failed to execute git worktree add")?;
 
     if !output.status.success() {
+        if let Some(pb) = header_pb {
+            pb.finish_and_clear();
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git worktree add failed: {stderr}");
     }
 
-    eprintln!(
-        "  {}",
-        color::success(
-            color_mode,
-            format!("Created worktree at: {}", display_path(&worktree_path))
-        )
-    );
+    // non-TTY: print header before hooks (rm/sync pattern)
+    let created_msg = format!("Created worktree at: {}", display_path(&worktree_path));
+    if !is_tty {
+        eprintln!("{}", color::success(color_mode, &created_msg));
+    }
 
     // Execute create hooks
     if !config.hooks.create.run.is_empty()
         || !config.hooks.create.copy.is_empty()
         || !config.hooks.create.link.is_empty()
     {
-        hooks::execute_hooks_lenient(
+        hooks::execute_hooks_lenient_with_mp(
             &config.hooks.create,
             &worktree_path,
             &repo_root,
             color_mode,
             "  ",
+            &mp,
         );
+    }
+
+    // Finish header: Creating → Created
+    if let Some(pb) = header_pb {
+        pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
+        pb.finish_with_message(format!("{}", color::success(color_mode, created_msg)));
     }
 
     // Add to zoxide if enabled

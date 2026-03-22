@@ -32,7 +32,7 @@ fn remove_worktree_internal(
         let pb = mp.add(ProgressBar::new_spinner());
         pb.set_style(
             ProgressStyle::default_spinner()
-                .template("  {spinner:.cyan} {msg}")
+                .template("{spinner:.cyan} {msg}")
                 .unwrap(),
         );
         pb.set_message(format!("Removing {label}"));
@@ -40,10 +40,7 @@ fn remove_worktree_internal(
         Some(pb)
     } else {
         // non-TTY: print header before hooks (sync pattern)
-        eprintln!(
-            "  {}",
-            color::success(color_mode, format!("Removed {label}"))
-        );
+        eprintln!("{}", color::success(color_mode, format!("Removed {label}")));
         None
     };
 
@@ -58,7 +55,7 @@ fn remove_worktree_internal(
             worktree_path,
             repo_root,
             color_mode,
-            "    ",
+            "  ",
             mp,
         );
     }
@@ -84,7 +81,7 @@ fn remove_worktree_internal(
     if let Some(pb) = header_pb {
         pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
         pb.finish_with_message(format!(
-            "  {}",
+            "{}",
             color::success(color_mode, format!("Removed {label}"))
         ));
     }
@@ -102,7 +99,7 @@ fn remove_worktree_internal(
                 mp,
                 is_tty,
                 format!(
-                    "    {}",
+                    "  {}",
                     color::success(color_mode, format!("Deleted branch: {branch}"))
                 ),
             );
@@ -195,7 +192,7 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
                     if seen_paths.contains(&canonical_path) {
                         non_current_removals.retain(|(path, _, _)| path != &canonical_path);
                         eprintln!(
-                            "  {}",
+                            "{}",
                             color::warn(
                                 color_mode,
                                 format!(
@@ -212,7 +209,7 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
                     // Check for duplicates (non-current targets)
                     if seen_paths.contains(&canonical_path) {
                         eprintln!(
-                            "  {}",
+                            "{}",
                             color::warn(
                                 color_mode,
                                 format!(

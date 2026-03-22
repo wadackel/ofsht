@@ -71,17 +71,14 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             let pb = mp.add(ProgressBar::new_spinner());
             pb.set_style(
                 ProgressStyle::default_spinner()
-                    .template("  {spinner:.cyan} {msg}")
+                    .template("{spinner:.cyan} {msg}")
                     .unwrap(),
             );
             pb.set_message(format!("Syncing {label}"));
             pb.enable_steady_tick(Duration::from_millis(100));
             Some(pb)
         } else {
-            eprintln!(
-                "  {}",
-                color::success(color_mode, format!("Synced {label}"))
-            );
+            eprintln!("{}", color::success(color_mode, format!("Synced {label}")));
             None
         };
 
@@ -91,7 +88,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             if let Some(pb) = header_pb {
                 pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
                 pb.finish_with_message(format!(
-                    "  {}",
+                    "{}",
                     color::success(color_mode, format!("Synced {label}"))
                 ));
             }
@@ -99,7 +96,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
                 &mp,
                 is_tty,
                 format!(
-                    "    {}",
+                    "  {}",
                     color::warn(
                         color_mode,
                         format!("Worktree directory not found, skipping: {path}")
@@ -109,14 +106,9 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             continue;
         }
 
-        if let Err(e) = hooks::execute_hooks_with_mp(
-            &actions,
-            worktree_path,
-            &repo_root,
-            color_mode,
-            "    ",
-            &mp,
-        ) {
+        if let Err(e) =
+            hooks::execute_hooks_with_mp(&actions, worktree_path, &repo_root, color_mode, "  ", &mp)
+        {
             errors.push(format!("{path}: {e}"));
         }
 
@@ -124,7 +116,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
         if let Some(pb) = header_pb {
             pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
             pb.finish_with_message(format!(
-                "  {}",
+                "{}",
                 color::success(color_mode, format!("Synced {label}"))
             ));
         }
@@ -136,7 +128,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             hooks::emit_line(
                 &mp,
                 is_tty,
-                format!("    {}", color::warn(color_mode, format!("Error: {err}"))),
+                format!("  {}", color::warn(color_mode, format!("Error: {err}"))),
             );
         }
         anyhow::bail!("Sync failed for {n} worktree(s)");
