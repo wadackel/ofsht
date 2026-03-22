@@ -84,7 +84,7 @@ pub fn cmd_create(
     }
 
     eprintln!(
-        "{}",
+        "  {}",
         color::success(
             color_mode,
             format!("Created worktree at: {}", display_path(&worktree_path))

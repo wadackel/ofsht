@@ -56,7 +56,7 @@ fn test_rm_current_from_worktree() {
         .assert()
         .success()
         .stdout(predicate::str::contains(repo_dir.path().to_str().unwrap()))
-        .stderr(predicate::str::contains("Removed worktree"));
+        .stderr(predicate::str::contains("Removed feature-test"));
 
     // Verify worktree was removed
     assert!(!worktree_path.exists());
