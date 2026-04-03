@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add relative path resolution for worktree directory names ([#84](https://github.com/wadackel/ofsht/pull/84))
 
 
+### Miscellaneous
+
+- Release v0.6.1 ([#78](https://github.com/wadackel/ofsht/pull/78))
+
+
+## [0.6.1] - 2026-04-03
+
+### Dependencies
+
+- Update github-actions (third-party) ([#79](https://github.com/wadackel/ofsht/pull/79))
+
+- Pin dependencies ([#80](https://github.com/wadackel/ofsht/pull/80))
+
+
+### Fixed
+
+- Add relative path resolution for worktree directory names ([#84](https://github.com/wadackel/ofsht/pull/84))
+
+
 ## [0.6.0] - 2026-03-22
 
 ### Added
