@@ -268,6 +268,7 @@ pub fn canonicalize_allow_missing(path: &Path) -> PathBuf {
 ///
 /// # Errors
 /// Returns an error if the worktree target cannot be found or refers to the main worktree
+#[allow(clippy::too_many_lines)]
 pub fn resolve_worktree_target(
     name: &str,
     list_stdout: &str,
@@ -347,34 +348,60 @@ pub fn resolve_worktree_target(
         let path_buf = PathBuf::from(&path);
         canonical_path = canonicalize_allow_missing(&path_buf);
     } else {
-        // Try to resolve as a path
-        let input_path_buf = PathBuf::from(name);
-        let canonical_input = canonicalize_allow_missing(&input_path_buf);
+        // Try to resolve as relative path from worktree root
+        let worktree_paths: Vec<PathBuf> = worktrees
+            .iter()
+            .map(|(path, _)| PathBuf::from(path))
+            .collect();
 
-        // Check if it's the main worktree
-        let main_path_buf = PathBuf::from(&main_path);
-        let canonical_main = canonicalize_allow_missing(&main_path_buf);
-        if canonical_input == canonical_main {
-            anyhow::bail!("Cannot remove main worktree");
-        }
+        let relative_match = crate::domain::worktree::calculate_worktree_root_from_paths(
+            &worktree_paths,
+        )
+        .and_then(|root| {
+            let abs_path = root.join(name);
+            find_worktree_by_path(list_stdout, &abs_path)
+        });
 
-        // Check if it matches any known worktree path
-        let mut found_worktree = None;
-        for (path, branch) in &worktrees {
-            let path_buf = PathBuf::from(path);
-            let canonical_worktree = canonicalize_allow_missing(&path_buf);
-            if canonical_input == canonical_worktree {
-                found_worktree = Some((path.clone(), branch.clone()));
-                break;
-            }
-        }
+        if let Some(ref_path) = relative_match {
+            // Look up branch name (ref_path is verbatim from porcelain output)
+            let matched_branch = worktrees
+                .iter()
+                .find(|(p, _)| p == &ref_path)
+                .and_then(|(_, branch)| branch.clone());
 
-        if let Some((path, branch)) = found_worktree {
-            worktree_path = PathBuf::from(path);
-            branch_name = branch;
-            canonical_path = canonical_input;
+            worktree_path = PathBuf::from(&ref_path);
+            branch_name = matched_branch;
+            canonical_path = canonicalize_allow_missing(&worktree_path);
         } else {
-            anyhow::bail!("Worktree not found: {name}");
+            // Fallback: try to resolve as an absolute path
+            let input_path_buf = PathBuf::from(name);
+            let canonical_input = canonicalize_allow_missing(&input_path_buf);
+
+            // Check if it's the main worktree
+            let main_path_buf = PathBuf::from(&main_path);
+            let canonical_main = canonicalize_allow_missing(&main_path_buf);
+            if canonical_input == canonical_main {
+                anyhow::bail!("Cannot remove main worktree");
+            }
+
+            // Check if it matches any known worktree path
+            let mut found_worktree = None;
+            for (path, branch) in &worktrees {
+                let path_buf = PathBuf::from(path);
+                let canonical_worktree = canonicalize_allow_missing(&path_buf);
+                if canonical_input == canonical_worktree {
+                    found_worktree = Some((path.clone(), branch.clone()));
+                    break;
+                }
+            }
+
+            if let Some((path, branch)) = found_worktree {
+                worktree_path = PathBuf::from(path);
+                branch_name = branch;
+                canonical_path = canonical_input;
+            } else {
+                anyhow::bail!("Worktree not found: {name}");
+            }
         }
     }
 
