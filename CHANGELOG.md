@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-04-24
+
+### Added
+
+- Hide flag candidates until the user types `-` ([#87](https://github.com/wadackel/ofsht/pull/87))
+
+
+### Dependencies
+
+- Update cargo dependencies (patch & minor) ([#81](https://github.com/wadackel/ofsht/pull/81))
+
+- Update github-actions (official) ([#86](https://github.com/wadackel/ofsht/pull/86))
+
+
+### Fixed
+
+- Update rust crate toml to v1 ([#83](https://github.com/wadackel/ofsht/pull/83))
+
+- Update rust crate dirs to v6 ([#82](https://github.com/wadackel/ofsht/pull/82))
+
+
 ## [0.6.1] - 2026-04-03
 
 ### Dependencies
