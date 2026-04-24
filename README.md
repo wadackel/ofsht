@@ -554,8 +554,10 @@ source (COMPLETE=fish ofsht | psub)
 
 After setup, you'll get intelligent completions:
 - `ofsht add feature <TAB>` - When specifying a start point, lists branches, remote refs, and tags
-- `ofsht rm <TAB>` - Lists worktree names (and flags, following standard CLI conventions)
+- `ofsht rm <TAB>` - Lists worktree names
 - `ofsht cd <TAB>` - Lists worktree names
+
+Global and subcommand flags are suggested only after the current word starts with `-` (e.g., `ofsht cd -<TAB>`).
 
 ## Common Workflows
 

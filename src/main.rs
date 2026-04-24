@@ -7,13 +7,15 @@ mod domain;
 mod hooks;
 mod integrations;
 mod service;
+mod shell_completion;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
-use clap_complete::env::CompleteEnv;
+use clap_complete::env::{CompleteEnv, Shells};
 
 // Use shared CLI definitions from cli module
 use cli::{Cli, Commands};
+use shell_completion::{FilteredBash, FilteredFish, FilteredZsh};
 
 #[cfg(test)]
 use {
@@ -24,8 +26,11 @@ use {
 };
 
 fn main() -> Result<()> {
-    // Handle dynamic completion via COMPLETE environment variable
-    CompleteEnv::with_factory(Cli::command).complete();
+    // Handle dynamic completion via COMPLETE environment variable.
+    // Custom shell adapters hide flag candidates unless the current word starts with `-`.
+    CompleteEnv::with_factory(Cli::command)
+        .shells(Shells(&[&FilteredBash, &FilteredZsh, &FilteredFish]))
+        .complete();
 
     let cli = Cli::parse();
 
