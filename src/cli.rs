@@ -29,8 +29,8 @@ pub struct Cli {
 pub enum Commands {
     /// Create a new worktree with a branch
     Add {
-        /// Branch name for the new worktree
-        branch: String,
+        /// Branch name for the new worktree (read from stdin when omitted and stdin is piped)
+        branch: Option<String>,
         /// Start point (branch, tag, or commit) for the new branch.
         /// Defaults to HEAD if not specified.
         #[arg(add = ArgValueCompleter::new(list_git_refs))]
@@ -44,8 +44,8 @@ pub enum Commands {
     },
     /// Create a new worktree without navigation
     Create {
-        /// Branch name for the new worktree
-        branch: String,
+        /// Branch name for the new worktree (read from stdin when omitted and stdin is piped)
+        branch: Option<String>,
         /// Start point (branch, tag, or commit) for the new branch.
         /// Defaults to HEAD if not specified.
         #[arg(add = ArgValueCompleter::new(list_git_refs))]

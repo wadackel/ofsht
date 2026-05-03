@@ -23,6 +23,7 @@ A command-line tool for managing Git worktrees with automation features.
 - [Quick Start](#quick-start)
 - [Usage](#usage)
   - [Basic Operations](#basic-operations)
+  - [Stdin Input](#stdin-input)
   - [Sync Hook Operations](#sync-hook-operations)
   - [GitHub Integration](#github-integration)
   - [Shell Integration](#shell-integration)
@@ -44,6 +45,7 @@ A command-line tool for managing Git worktrees with automation features.
 - Navigate to worktrees by branch name
 - Remove worktrees with automatic branch cleanup
 - Interactive worktree selection with fzf integration
+- Read branch / target names from stdin when piped (auto-detected for `add`, `create`, `cd`, `rm`)
 
 ⚙️ **Automation & Hooks**
 - Run commands after worktree creation (e.g., `npm install`)
@@ -238,6 +240,31 @@ ofsht rm feature-deleted
 
 > [!NOTE]
 > `ofsht rm` can remove worktrees even if their directories have been manually deleted. Git marks such worktrees as "prunable" (still registered in Git but directory missing), and `ofsht` handles them gracefully by cleaning up the Git registration.
+
+### Stdin Input
+
+When stdin is piped or redirected, `ofsht` automatically reads positional arguments from it. CLI arguments always take priority; stdin is used only when the corresponding argument is omitted.
+
+```bash
+# add / create read the first non-empty line as the branch name
+echo my-feature | ofsht add
+echo bugfix-1 | ofsht create
+
+# cd reads the first non-empty line as the worktree name
+echo feature-awesome | ofsht cd
+
+# rm reads each non-empty line as a target (xargs-style)
+printf 'feature-a\nfeature-b\n' | ofsht rm
+
+# CLI arguments always win — stdin is ignored when an argument is present
+echo ignored-name | ofsht add explicit-name   # creates "explicit-name"
+```
+
+> [!NOTE]
+> Stdin is read only when the input is **not a TTY** (i.e. piped or redirected). On an interactive terminal with no arguments, `cd` / `rm` continue to launch fzf as before, and `add` / `create` exit with `branch name required`.
+
+> [!NOTE]
+> For `add` / `create` (single-argument), only the first non-empty line is used. For `rm` (multi-argument), every non-empty line becomes a target.
 
 ### Shell Integration
 
@@ -618,6 +645,21 @@ ofsht rm feature-new-api          # Hooks run cleanup commands
 
 # Or clean up from within the worktree
 ofsht rm .                        # Automatically returns to main repo
+```
+
+### Piping with Other Tools
+
+```bash
+# Bulk-remove every merged feature branch's worktree
+git branch --merged main | grep -v '^\*\|main$' | ofsht rm
+
+# Spin up a worktree for each open PR you own
+gh pr list --author @me --json headRefName -q '.[].headRefName' | while read branch; do
+    echo "$branch" | ofsht add
+done
+
+# Drive cd from another tool's selection (default `ls` emits one branch name per line)
+ofsht ls | fzf | ofsht cd
 ```
 
 ### Restoring tmux Workspace After Restart
