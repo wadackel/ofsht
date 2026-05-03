@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-03
+
+### Added
+
+- Read positional arguments from stdin when piped ([#98](https://github.com/wadackel/ofsht/pull/98))
+
+
 ## [0.6.2] - 2026-04-24
 
 ### Added
