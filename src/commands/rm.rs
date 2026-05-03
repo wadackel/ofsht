@@ -139,37 +139,43 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
 
     let list_stdout = String::from_utf8_lossy(&list_output.stdout);
 
-    // If no targets provided, use fzf for interactive multi-selection
+    // Resolve targets: CLI args > stdin (when piped) > fzf
     let targets: Vec<String> = if targets.is_empty() {
-        if !config.integrations.fzf.enabled {
-            anyhow::bail!("Provide at least one target or enable fzf in config");
+        let stdin_targets = crate::stdin::try_read_stdin_lines()?;
+        if stdin_targets.is_empty() {
+            if !config.integrations.fzf.enabled {
+                anyhow::bail!("Provide at least one target or enable fzf in config");
+            }
+
+            if !integrations::fzf::is_fzf_available() {
+                anyhow::bail!("fzf is not installed. Install it or provide at least one target");
+            }
+
+            // Build items for fzf
+            let items = integrations::fzf::build_worktree_items(&list_stdout);
+
+            if items.is_empty() {
+                anyhow::bail!("No worktrees found");
+            }
+
+            // Use fzf to select (multi-select enabled)
+            let picker =
+                integrations::fzf::RealFzfPicker::new(config.integrations.fzf.options.clone());
+            let selected = picker.pick(&items, true)?;
+
+            if selected.is_empty() {
+                // User pressed Esc or no selection
+                return Ok(());
+            }
+
+            // selected contains paths, convert them to branch names or paths as targets
+            selected
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect()
+        } else {
+            stdin_targets
         }
-
-        if !integrations::fzf::is_fzf_available() {
-            anyhow::bail!("fzf is not installed. Install it or provide at least one target");
-        }
-
-        // Build items for fzf
-        let items = integrations::fzf::build_worktree_items(&list_stdout);
-
-        if items.is_empty() {
-            anyhow::bail!("No worktrees found");
-        }
-
-        // Use fzf to select (multi-select enabled)
-        let picker = integrations::fzf::RealFzfPicker::new(config.integrations.fzf.options.clone());
-        let selected = picker.pick(&items, true)?;
-
-        if selected.is_empty() {
-            // User pressed Esc or no selection
-            return Ok(());
-        }
-
-        // selected contains paths, convert them to branch names or paths as targets
-        selected
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect()
     } else {
         targets.to_vec()
     };

@@ -21,10 +21,19 @@ use crate::integrations;
 /// - Zoxide registration fails
 #[allow(clippy::missing_panics_doc)]
 pub fn cmd_create(
-    branch: &str,
+    branch: Option<&str>,
     start_point: Option<&str>,
     color_mode: color::ColorMode,
 ) -> Result<()> {
+    // Resolve branch: CLI arg > stdin (when piped) > error
+    let branch_owned = match branch {
+        Some(b) => b.to_string(),
+        None => crate::stdin::try_read_stdin_first()?.ok_or_else(|| {
+            anyhow::anyhow!("branch name required (provide as argument or via stdin)")
+        })?,
+    };
+    let branch = branch_owned.as_str();
+
     // Get main repository root
     let repo_root = get_main_repo_root()?;
 

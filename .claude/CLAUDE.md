@@ -60,6 +60,13 @@ cargo run -- sync
 cargo run -- sync --link
 cargo run -- sync --run --copy
 
+# Test stdin input (auto-detected when piped; CLI arg always wins)
+echo feature-branch | cargo run -- add
+echo feature-branch | cargo run -- create
+echo feature-branch | cargo run -- cd
+printf 'feature-a\nfeature-b\n' | cargo run -- rm
+cargo run -- add < /dev/null  # errors with "branch name required"
+
 # Use release binary
 ./target/release/ofsht add feature-branch
 ```
@@ -100,6 +107,7 @@ src/
 ├── domain/           # Domain models and logic
 │   └── worktree.rs   # Worktree entry parsing and formatting
 ├── hooks.rs          # Hook execution engine (run/copy/link)
+├── stdin.rs          # Stdin input helpers (TTY-aware) for piped argument resolution
 ├── integrations/     # External tool integrations
 │   ├── fzf/          # Interactive selection
 │   ├── gh/           # GitHub CLI integration

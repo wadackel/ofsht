@@ -655,6 +655,85 @@ ofsht open
 # "No worktrees to open (all worktrees are already in the current session)."
 ```
 
+## Stdin Input Verification
+
+`ofsht` reads positional arguments from stdin when stdin is piped or redirected (auto-detected via TTY check). CLI arguments always take priority. Verify each command from a fresh test repository.
+
+### 1. Setup
+
+```bash
+cd /tmp
+rm -rf demo-stdin
+mkdir demo-stdin
+cd demo-stdin
+git init
+git commit --allow-empty -m "Initial commit"
+```
+
+### 2. `add` Reads Branch From Stdin
+
+```bash
+echo "stdin-feat" | ofsht add
+
+# Expected:
+# - Worktree created at ../demo-stdin-worktrees/stdin-feat
+# - "Added stdin-feat" on stderr
+ls -la ../demo-stdin-worktrees/stdin-feat
+```
+
+### 3. `cd` Reads Name From Stdin
+
+```bash
+echo "stdin-feat" | ofsht cd
+
+# Expected:
+# - Absolute path of stdin-feat worktree printed to stdout
+```
+
+### 4. `rm` Reads Multiple Targets From Stdin
+
+```bash
+ofsht add stdin-rm-a
+ofsht add stdin-rm-b
+
+printf 'stdin-rm-a\nstdin-rm-b\n' | ofsht rm
+
+# Expected:
+# - Both worktrees removed
+# - "Removed stdin-rm-a" and "Removed stdin-rm-b" on stderr
+ls ../demo-stdin-worktrees/  # neither directory should remain
+```
+
+### 5. CLI Argument Wins Over Stdin
+
+```bash
+echo "stdin-name" | ofsht add explicit-name
+
+# Expected:
+# - Worktree "explicit-name" created (stdin "stdin-name" ignored)
+ls -la ../demo-stdin-worktrees/explicit-name
+[ ! -d ../demo-stdin-worktrees/stdin-name ] && echo "OK: stdin-name not created"
+```
+
+### 6. Empty Stdin Errors For `add` / `create`
+
+```bash
+ofsht add < /dev/null
+
+# Expected:
+# - Non-zero exit
+# - Error: "branch name required (provide as argument or via stdin)"
+```
+
+### 7. Interactive TTY Falls Back To Existing Behavior
+
+```bash
+# In an interactive shell (no piping):
+ofsht cd      # launches fzf as before (if fzf is installed and enabled)
+ofsht rm      # launches fzf as before
+ofsht add     # exits with "branch name required"
+```
+
 ## Summary
 
 This document verified the following features:
@@ -665,6 +744,7 @@ This document verified the following features:
 - ✅ Sync command (sync hook operations to existing worktrees)
 - ✅ Open command (open all worktrees in tmux)
 - ✅ zoxide integration
+- ✅ Stdin input (auto-detected when piped; CLI arg priority; per-command line semantics)
 - ✅ Path template customization
 - ✅ Local/global configuration
 

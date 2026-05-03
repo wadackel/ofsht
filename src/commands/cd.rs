@@ -31,8 +31,13 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // If no name provided, use fzf for interactive selection
-    let Some(name) = name else {
+    // Resolve name: CLI arg > stdin (when piped) > fzf
+    let resolved_name: Option<String> = match name {
+        Some(n) => Some(n.to_string()),
+        None => crate::stdin::try_read_stdin_first()?,
+    };
+
+    let Some(name) = resolved_name else {
         let repo_root = get_main_repo_root()?;
         let config = config::Config::load_from_repo_root(&repo_root)?;
 
@@ -63,6 +68,7 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
         println!("{}", normalize_absolute_path(&PathBuf::from(&selected[0])));
         return Ok(());
     };
+    let name = name.as_str();
 
     // Special handling for "@" (main worktree)
     if name == "@" {

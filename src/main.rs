@@ -8,6 +8,7 @@ mod hooks;
 mod integrations;
 mod service;
 mod shell_completion;
+mod stdin;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
@@ -43,11 +44,17 @@ fn main() -> Result<()> {
             start_point,
             tmux,
             no_tmux,
-        } => commands::add::cmd_new(&branch, start_point.as_deref(), tmux, no_tmux, color_mode),
+        } => commands::add::cmd_new(
+            branch.as_deref(),
+            start_point.as_deref(),
+            tmux,
+            no_tmux,
+            color_mode,
+        ),
         Commands::Create {
             branch,
             start_point,
-        } => commands::create::cmd_create(&branch, start_point.as_deref(), color_mode),
+        } => commands::create::cmd_create(branch.as_deref(), start_point.as_deref(), color_mode),
         Commands::Ls { show_path } => commands::list::cmd_list(show_path, color_mode),
         Commands::Rm { targets } => commands::rm::cmd_rm_many(&targets, color_mode),
         Commands::Cd { name } => commands::cd::cmd_goto(name.as_deref(), color_mode),

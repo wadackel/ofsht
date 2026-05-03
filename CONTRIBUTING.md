@@ -165,6 +165,7 @@ src/
 ├── color.rs             # Color output utilities
 ├── hooks.rs             # Hook execution engine (run/copy/link)
 ├── service.rs           # Service layer orchestrating git, hooks, and integrations
+├── stdin.rs             # Stdin input helpers (TTY-aware) for piped argument resolution
 ├── commands/
 │   ├── common.rs        # Shared utilities for command handlers
 │   ├── open.rs          # Open all worktrees in tmux
