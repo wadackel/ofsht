@@ -38,24 +38,6 @@ pub fn is_zoxide_available() -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// Add a path to zoxide if enabled and available
-///
-/// This function gracefully handles the case where zoxide is not installed.
-/// It will only return an error if zoxide is installed but fails to add the path.
-pub fn add_to_zoxide_if_enabled(path: &Path, enabled: bool) -> Result<()> {
-    if !enabled {
-        return Ok(());
-    }
-
-    if !is_zoxide_available() {
-        // Gracefully skip if zoxide is not installed
-        return Ok(());
-    }
-
-    let client = RealZoxideClient;
-    client.add(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,31 +77,5 @@ mod tests {
         // This test will pass or fail depending on whether zoxide is installed
         // We're just checking that the function doesn't panic
         let _ = is_zoxide_available();
-    }
-
-    #[test]
-    fn test_add_to_zoxide_if_enabled_disabled() {
-        let path = PathBuf::from("/test/path");
-        let result = add_to_zoxide_if_enabled(&path, false);
-        // Should succeed even if zoxide is not available
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_add_to_zoxide_if_enabled_enabled() {
-        // This test will succeed if:
-        // 1. zoxide is installed and can add the path (success)
-        // 2. zoxide is not installed (gracefully skipped, success)
-        // It may fail if zoxide is installed but returns an error
-        let path = PathBuf::from("/tmp");
-        let result = add_to_zoxide_if_enabled(&path, true);
-
-        if is_zoxide_available() {
-            // If zoxide is available, it should successfully add the path
-            assert!(result.is_ok(), "Failed to add to zoxide: {result:?}");
-        } else {
-            // If zoxide is not available, it should gracefully succeed
-            assert!(result.is_ok());
-        }
     }
 }

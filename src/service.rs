@@ -1,9 +1,21 @@
 #![allow(clippy::missing_errors_doc)]
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::integrations::git::GitClient;
 use crate::integrations::zoxide::ZoxideClient;
+
+/// Request describing where and how to create a worktree.
+///
+/// Borrow-based: the caller owns `branch` / `repo_root` / `path_template`
+/// for the duration of the `WorktreeService::create` call.
+pub struct CreateWorktreeRequest<'a> {
+    pub branch: &'a str,
+    pub start_point: Option<&'a str>,
+    pub repo_root: &'a Path,
+    pub path_template: &'a str,
+    pub zoxide_enabled: bool,
+}
 
 /// Worktree service that coordinates git creation and zoxide registration.
 ///
@@ -31,36 +43,49 @@ where
         }
     }
 
-    /// Create a worktree, then run `on_after_git`, then register with
-    /// zoxide when enabled.
+    /// Create a worktree from `req`: expand the path template, run
+    /// `git worktree add`, invoke `on_after_git` (typically to execute
+    /// user hooks), then register with zoxide when enabled.
     ///
-    /// The callback runs after `git worktree add` succeeds and before
-    /// zoxide registration; it is the caller's hook for printing
-    /// progress messages and executing user-defined create hooks.
-    /// Returning `Err` from the callback aborts the flow before zoxide
-    /// is touched.
-    pub fn create_worktree<F>(
-        &self,
-        branch: &str,
-        worktree_path: &Path,
-        start_point: Option<&str>,
-        repo_root: &Path,
-        zoxide_enabled: bool,
-        on_after_git: F,
-    ) -> Result<PathBuf>
+    /// Returns the worktree path the service computed (the same value
+    /// passed to `on_after_git`). No canonicalization is performed; the
+    /// caller is responsible for normalization at any output boundary.
+    pub fn create<F>(&self, req: &CreateWorktreeRequest<'_>, on_after_git: F) -> Result<PathBuf>
     where
         F: FnOnce(&Path) -> Result<()>,
     {
-        self.git_client
-            .create_worktree(branch, worktree_path, start_point, Some(repo_root))?;
+        let repo_name = req
+            .repo_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("Failed to get repository name")?;
 
-        on_after_git(worktree_path)?;
+        #[allow(clippy::literal_string_with_formatting_args)]
+        let expanded = req
+            .path_template
+            .replace("{repo}", repo_name)
+            .replace("{branch}", req.branch);
 
-        if zoxide_enabled {
-            self.zoxide_client.add(worktree_path)?;
+        let worktree_path = if expanded.starts_with('/') {
+            PathBuf::from(&expanded)
+        } else {
+            req.repo_root.join(&expanded)
+        };
+
+        self.git_client.create_worktree(
+            req.branch,
+            &worktree_path,
+            req.start_point,
+            Some(req.repo_root),
+        )?;
+
+        on_after_git(&worktree_path)?;
+
+        if req.zoxide_enabled {
+            self.zoxide_client.add(&worktree_path)?;
         }
 
-        Ok(worktree_path.to_path_buf())
+        Ok(worktree_path)
     }
 }
 
@@ -94,46 +119,55 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_create_worktree_success() {
-        let service = WorktreeService::new(MockGitClient::default(), MockZoxideClient::new());
-        let worktree_path = PathBuf::from("/test/worktree");
-        let repo_root = PathBuf::from("/test/repo");
-
-        let result = service.create_worktree(
-            "feature",
-            &worktree_path,
-            None,
-            &repo_root,
-            true,
-            |_| Ok(()),
-        );
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), worktree_path);
+    fn make_req<'a>(
+        branch: &'a str,
+        repo_root: &'a Path,
+        path_template: &'a str,
+        zoxide_enabled: bool,
+    ) -> CreateWorktreeRequest<'a> {
+        CreateWorktreeRequest {
+            branch,
+            start_point: None,
+            repo_root,
+            path_template,
+            zoxide_enabled,
+        }
     }
 
     #[test]
-    fn test_create_worktree_with_start_point() {
+    fn test_create_success() {
         let service = WorktreeService::new(MockGitClient::default(), MockZoxideClient::new());
-        let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
+        let req = make_req("feature", &repo_root, "../{repo}-worktrees/{branch}", true);
 
-        let result = service.create_worktree(
-            "feature",
-            &worktree_path,
-            Some("main"),
-            &repo_root,
-            false,
-            |_| Ok(()),
-        );
+        let result = service.create(&req, |_| Ok(()));
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), worktree_path);
+        assert_eq!(
+            result.unwrap(),
+            PathBuf::from("/test/repo/../repo-worktrees/feature")
+        );
     }
 
     #[test]
-    fn test_create_worktree_git_failure_skips_callback_and_zoxide() {
+    fn test_create_with_start_point() {
+        let service = WorktreeService::new(MockGitClient::default(), MockZoxideClient::new());
+        let repo_root = PathBuf::from("/test/repo");
+        let req = CreateWorktreeRequest {
+            branch: "feature",
+            start_point: Some("main"),
+            repo_root: &repo_root,
+            path_template: "../{repo}-worktrees/{branch}",
+            zoxide_enabled: false,
+        };
+
+        let result = service.create(&req, |_| Ok(()));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_create_git_failure_skips_callback_and_zoxide() {
         let service = WorktreeService::new(
             MockGitClient {
                 create_should_fail: true,
@@ -142,14 +176,13 @@ mod tests {
             MockZoxideClient::with_failure(),
         );
         let callback_called = Cell::new(false);
-        let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
+        let req = make_req("feature", &repo_root, "../{repo}-worktrees/{branch}", true);
 
-        let result =
-            service.create_worktree("feature", &worktree_path, None, &repo_root, true, |_| {
-                callback_called.set(true);
-                Ok(())
-            });
+        let result = service.create(&req, |_| {
+            callback_called.set(true);
+            Ok(())
+        });
 
         assert!(result.is_err());
         assert!(result
@@ -163,38 +196,28 @@ mod tests {
     }
 
     #[test]
-    fn test_create_worktree_callback_error_propagates_and_skips_zoxide() {
+    fn test_create_callback_error_propagates_and_skips_zoxide() {
         let service = WorktreeService::new(
             MockGitClient::default(),
             MockZoxideClient::with_failure(), // would fail if reached
         );
-        let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
+        let req = make_req("feature", &repo_root, "../{repo}-worktrees/{branch}", true);
 
-        let result =
-            service.create_worktree("feature", &worktree_path, None, &repo_root, true, |_| {
-                anyhow::bail!("callback boom")
-            });
+        let result = service.create(&req, |_| anyhow::bail!("callback boom"));
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("callback boom"));
     }
 
     #[test]
-    fn test_create_worktree_zoxide_failure() {
+    fn test_create_zoxide_failure() {
         let service =
             WorktreeService::new(MockGitClient::default(), MockZoxideClient::with_failure());
-        let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
+        let req = make_req("feature", &repo_root, "../{repo}-worktrees/{branch}", true);
 
-        let result = service.create_worktree(
-            "feature",
-            &worktree_path,
-            None,
-            &repo_root,
-            true, // zoxide enabled
-            |_| Ok(()),
-        );
+        let result = service.create(&req, |_| Ok(()));
 
         assert!(result.is_err());
         assert!(result
@@ -204,24 +227,50 @@ mod tests {
     }
 
     #[test]
-    fn test_create_worktree_zoxide_disabled_skips_zoxide() {
+    fn test_create_zoxide_disabled_skips_zoxide() {
         let service = WorktreeService::new(
             MockGitClient::default(),
             MockZoxideClient::with_failure(), // would fail if reached
         );
-        let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
+        let req = make_req("feature", &repo_root, "../{repo}-worktrees/{branch}", true);
+        let req = CreateWorktreeRequest {
+            zoxide_enabled: false,
+            ..req
+        };
 
-        let result = service.create_worktree(
-            "feature",
-            &worktree_path,
-            None,
-            &repo_root,
-            false, // zoxide disabled
-            |_| Ok(()),
-        );
+        let result = service.create(&req, |_| Ok(()));
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), worktree_path);
+    }
+
+    #[test]
+    fn test_create_expands_relative_template() {
+        let service = WorktreeService::new(MockGitClient::default(), MockZoxideClient::new());
+        let repo_root = PathBuf::from("/Users/me/projects/myrepo");
+        let req = make_req(
+            "feat/auth",
+            &repo_root,
+            "../{repo}-worktrees/{branch}",
+            false,
+        );
+
+        let result = service.create(&req, |_| Ok(())).unwrap();
+
+        assert_eq!(
+            result,
+            PathBuf::from("/Users/me/projects/myrepo/../myrepo-worktrees/feat/auth")
+        );
+    }
+
+    #[test]
+    fn test_create_expands_absolute_template() {
+        let service = WorktreeService::new(MockGitClient::default(), MockZoxideClient::new());
+        let repo_root = PathBuf::from("/Users/me/projects/myrepo");
+        let req = make_req("feature", &repo_root, "/tmp/wt/{repo}/{branch}", false);
+
+        let result = service.create(&req, |_| Ok(())).unwrap();
+
+        assert_eq!(result, PathBuf::from("/tmp/wt/myrepo/feature"));
     }
 }

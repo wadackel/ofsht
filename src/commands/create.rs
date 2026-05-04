@@ -1,6 +1,6 @@
 //! Create command - Simple worktree creation without extra features
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use crate::hooks;
 use crate::integrations::git::RealGitClient;
 use crate::integrations::zoxide::{is_zoxide_available, RealZoxideClient};
 use crate::path_utils::display_path;
-use crate::service::WorktreeService;
+use crate::service::{CreateWorktreeRequest, WorktreeService};
 
 /// Create a new worktree (simple version without tmux/GitHub integration)
 ///
@@ -40,25 +40,6 @@ pub fn cmd_create(
 
     // Load configuration from repo root
     let config = config::Config::load_from_repo_root(&repo_root)?;
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Failed to get repository name")?;
-
-    // Expand path template
-    #[allow(clippy::literal_string_with_formatting_args)]
-    let path_template = config
-        .worktree
-        .dir
-        .replace("{repo}", repo_name)
-        .replace("{branch}", branch);
-
-    // Create worktree path (relative paths are resolved from repo root)
-    let worktree_path = if path_template.starts_with('/') {
-        std::path::PathBuf::from(&path_template)
-    } else {
-        repo_root.join(&path_template)
-    };
 
     let mp = MultiProgress::new();
     let is_tty = color_mode.should_colorize();
@@ -85,41 +66,42 @@ pub fn cmd_create(
     let service = WorktreeService::new(RealGitClient, RealZoxideClient);
 
     let hook_actions = &config.hooks.create;
-    let result = service.create_worktree(
+    let req = CreateWorktreeRequest {
         branch,
-        &worktree_path,
         start_point,
-        &repo_root,
+        repo_root: &repo_root,
+        path_template: &config.worktree.dir,
         zoxide_enabled,
-        |path| {
-            // non-TTY: print "Created..." header before hooks (matches rm/sync pattern)
-            if !is_tty {
-                eprintln!(
-                    "{}",
-                    color::success(
-                        color_mode,
-                        format!("Created worktree at: {}", display_path(path))
-                    )
-                );
-            }
+    };
 
-            if !hook_actions.run.is_empty()
-                || !hook_actions.copy.is_empty()
-                || !hook_actions.link.is_empty()
-            {
-                hooks::execute_hooks_lenient_with_mp(
-                    hook_actions,
-                    path,
-                    &repo_root,
+    let result = service.create(&req, |path| {
+        // non-TTY: print "Created..." header before hooks (matches rm/sync pattern)
+        if !is_tty {
+            eprintln!(
+                "{}",
+                color::success(
                     color_mode,
-                    "  ",
-                    &mp,
-                );
-            }
+                    format!("Created worktree at: {}", display_path(path))
+                )
+            );
+        }
 
-            Ok(())
-        },
-    );
+        if !hook_actions.run.is_empty()
+            || !hook_actions.copy.is_empty()
+            || !hook_actions.link.is_empty()
+        {
+            hooks::execute_hooks_lenient_with_mp(
+                hook_actions,
+                path,
+                &repo_root,
+                color_mode,
+                "  ",
+                &mp,
+            );
+        }
+
+        Ok(())
+    });
 
     match result {
         Err(e) => {
