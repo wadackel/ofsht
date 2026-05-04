@@ -40,9 +40,10 @@ pub trait GitClient {
 
     /// Run `git rev-parse --verify <ref>` and return whether it succeeded.
     ///
-    /// Spawn failures are treated as `false` to match existing call-site
-    /// semantics that use `is_ok_and(|o| o.status.success())`.
-    fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> bool;
+    /// Returns `Ok(true)` when the ref exists, `Ok(false)` when git exits
+    /// non-zero (ref does not exist), and `Err` only when the git process
+    /// cannot be spawned.
+    fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> Result<bool>;
 
     /// Run `git <args>` (caller supplies the full argument list including
     /// `rev-parse`) and return stdout on success.
@@ -53,7 +54,7 @@ pub trait GitClient {
     fn fetch(&self, args: &[&str], dir: Option<&Path>) -> Result<()>;
 
     /// Run `git for-each-ref --format=<format> <refs...>` and return stdout.
-    fn for_each_ref(&self, refs: &[&str], format: &str) -> Result<String>;
+    fn for_each_ref(&self, refs: &[&str], format: &str, dir: Option<&Path>) -> Result<String>;
 
     /// Run `git -C <worktree_path> log -1 --format=%ct` and return the
     /// resulting timestamp. Returns `None` for any failure (spawn / non-zero
@@ -74,6 +75,21 @@ fn build_command(dir: Option<&Path>) -> Command {
     cmd
 }
 
+/// Spawn the configured command, fail with `git {op} failed: ...` on non-zero
+/// exit, and return stdout on success. Centralizes the spawn-context, status
+/// check, and bail pattern shared by every `RealGitClient` method that
+/// propagates errors.
+fn run_capturing(mut cmd: Command, op: &str) -> Result<String> {
+    let output = cmd
+        .output()
+        .with_context(|| format!("Failed to execute git {op}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git {op} failed: {stderr}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 impl GitClient for RealGitClient {
     fn create_worktree(
         &self,
@@ -87,51 +103,26 @@ impl GitClient for RealGitClient {
 
         if let Some(start) = start_point {
             cmd.arg("-b").arg(branch).arg(path).arg(start);
-        } else if self.branch_exists(branch, dir) {
+        } else if self.branch_exists(branch, dir)? {
             cmd.arg(path).arg(branch);
         } else {
             cmd.arg("-b").arg(branch).arg(path);
         }
 
-        let output = cmd.output().context("Failed to execute git worktree add")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree add failed: {stderr}");
-        }
-
+        run_capturing(cmd, "worktree add")?;
         Ok(())
     }
 
     fn list_worktrees(&self, dir: Option<&Path>) -> Result<String> {
         let mut cmd = build_command(dir);
-        let output = cmd
-            .args(["worktree", "list", "--porcelain"])
-            .output()
-            .context("Failed to execute git worktree list")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree list failed: {stderr}");
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        cmd.args(["worktree", "list", "--porcelain"]);
+        run_capturing(cmd, "worktree list")
     }
 
     fn remove_worktree(&self, path: &Path, dir: Option<&Path>) -> Result<()> {
         let mut cmd = build_command(dir);
-        let output = cmd
-            .arg("worktree")
-            .arg("remove")
-            .arg(path)
-            .output()
-            .context("Failed to execute git worktree remove")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree remove failed: {stderr}");
-        }
-
+        cmd.arg("worktree").arg("remove").arg(path);
+        run_capturing(cmd, "worktree remove")?;
         Ok(())
     }
 
@@ -145,57 +136,34 @@ impl GitClient for RealGitClient {
         Ok(output.status.success())
     }
 
-    fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> bool {
+    fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> Result<bool> {
         let mut cmd = build_command(dir);
-        cmd.args(["rev-parse", "--verify", ref_])
+        let output = cmd
+            .args(["rev-parse", "--verify", ref_])
             .output()
-            .is_ok_and(|o| o.status.success())
+            .context("Failed to execute git rev-parse --verify")?;
+        Ok(output.status.success())
     }
 
     fn rev_parse(&self, args: &[&str], dir: Option<&Path>) -> Result<String> {
         let mut cmd = build_command(dir);
-        let output = cmd
-            .args(args)
-            .output()
-            .context("Failed to execute git rev-parse")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git rev-parse failed: {stderr}");
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        cmd.args(args);
+        run_capturing(cmd, "rev-parse")
     }
 
     fn fetch(&self, args: &[&str], dir: Option<&Path>) -> Result<()> {
         let mut cmd = build_command(dir);
-        let output = cmd
-            .args(args)
-            .output()
-            .context("Failed to execute git fetch")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git fetch failed: {stderr}");
-        }
-
+        cmd.args(args);
+        run_capturing(cmd, "fetch")?;
         Ok(())
     }
 
-    fn for_each_ref(&self, refs: &[&str], format: &str) -> Result<String> {
-        let output = Command::new("git")
-            .arg("for-each-ref")
+    fn for_each_ref(&self, refs: &[&str], format: &str, dir: Option<&Path>) -> Result<String> {
+        let mut cmd = build_command(dir);
+        cmd.arg("for-each-ref")
             .arg(format!("--format={format}"))
-            .args(refs)
-            .output()
-            .context("Failed to execute git for-each-ref")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git for-each-ref failed: {stderr}");
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            .args(refs);
+        run_capturing(cmd, "for-each-ref")
     }
 
     fn last_commit_time(&self, worktree_path: &Path) -> Option<DateTime<Utc>> {
@@ -278,8 +246,8 @@ pub mod tests {
             Ok(self.remove_branch_returns)
         }
 
-        fn branch_exists(&self, _ref_: &str, _dir: Option<&Path>) -> bool {
-            self.branch_exists_value
+        fn branch_exists(&self, _ref_: &str, _dir: Option<&Path>) -> Result<bool> {
+            Ok(self.branch_exists_value)
         }
 
         fn rev_parse(&self, _args: &[&str], _dir: Option<&Path>) -> Result<String> {
@@ -296,7 +264,12 @@ pub mod tests {
             Ok(())
         }
 
-        fn for_each_ref(&self, _refs: &[&str], _format: &str) -> Result<String> {
+        fn for_each_ref(
+            &self,
+            _refs: &[&str],
+            _format: &str,
+            _dir: Option<&Path>,
+        ) -> Result<String> {
             Ok(self.for_each_ref_output.clone())
         }
 

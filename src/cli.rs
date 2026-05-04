@@ -132,6 +132,7 @@ pub fn list_git_refs(current: &OsStr) -> Vec<CompletionCandidate> {
     let Ok(stdout) = git.for_each_ref(
         &["refs/heads", "refs/remotes", "refs/tags"],
         "%(refname:short)%09%(symref)",
+        None,
     ) else {
         return Vec::new();
     };
@@ -173,6 +174,7 @@ pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
     let Ok(stdout) = git.for_each_ref(
         &["refs/heads", "refs/remotes"],
         "%(refname:short)%09%(symref)",
+        None,
     ) else {
         return Vec::new();
     };

@@ -1,6 +1,6 @@
 //! Add command - Create new worktrees with GitHub integration and tmux support
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
@@ -11,7 +11,9 @@ use crate::hooks;
 use crate::integrations;
 use crate::integrations::git::{GitClient, RealGitClient};
 use crate::integrations::tmux::TmuxLauncher;
+use crate::integrations::zoxide::{is_zoxide_available, RealZoxideClient};
 use crate::path_utils::normalize_absolute_path;
+use crate::service::{CreateWorktreeRequest, WorktreeService};
 
 /// Process a PR and return branch name and start point
 fn process_pr(
@@ -33,7 +35,7 @@ fn process_pr(
         .map_err(|e| anyhow::anyhow!("git fetch PR ref failed: {e}"))?;
 
         // Check if local branch with PR's name already exists
-        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root));
+        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root))?;
 
         eprintln!(
             "{}",
@@ -78,7 +80,7 @@ fn process_pr(
         );
 
         // Check if local branch already exists
-        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root));
+        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root))?;
 
         if branch_exists {
             // Existing local branch - use it directly
@@ -219,25 +221,6 @@ pub fn cmd_new(
         let launcher = integrations::tmux::RealTmuxLauncher;
         launcher.detect()?;
     }
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Failed to get repository name")?;
-
-    // Expand path template
-    #[allow(clippy::literal_string_with_formatting_args)]
-    let path_template = config
-        .worktree
-        .dir
-        .replace("{repo}", repo_name)
-        .replace("{branch}", branch);
-
-    // Create worktree path (relative paths are resolved from repo root)
-    let worktree_path = if path_template.starts_with('/') {
-        std::path::PathBuf::from(&path_template)
-    } else {
-        repo_root.join(&path_template)
-    };
 
     let mp = MultiProgress::new();
     let is_tty = color_mode.should_colorize();
@@ -257,34 +240,51 @@ pub fn cmd_new(
         None
     };
 
-    // Create worktree (RealGitClient handles the new/existing-branch dispatch internally)
-    let git = RealGitClient;
-    if let Err(e) = git.create_worktree(branch, &worktree_path, start_point, Some(&repo_root)) {
-        if let Some(pb) = header_pb {
-            pb.finish_and_clear();
+    // Resolve zoxide gating before handing control to the service.
+    let zoxide_enabled = config.integrations.zoxide.enabled && is_zoxide_available();
+
+    let service = WorktreeService::new(RealGitClient, RealZoxideClient);
+    let hook_actions = &config.hooks.create;
+    let req = CreateWorktreeRequest {
+        branch,
+        start_point,
+        repo_root: &repo_root,
+        path_template: &config.worktree.dir,
+        zoxide_enabled,
+    };
+
+    let result = service.create(&req, |path| {
+        // non-TTY: print header before hooks (rm/sync pattern)
+        if !is_tty {
+            eprintln!("{}", color::success(color_mode, format!("Added {branch}")));
         }
-        return Err(e);
-    }
 
-    // non-TTY: print header before hooks (rm/sync pattern)
-    if !is_tty {
-        eprintln!("{}", color::success(color_mode, format!("Added {branch}")));
-    }
+        if !hook_actions.run.is_empty()
+            || !hook_actions.copy.is_empty()
+            || !hook_actions.link.is_empty()
+        {
+            hooks::execute_hooks_lenient_with_mp(
+                hook_actions,
+                path,
+                &repo_root,
+                color_mode,
+                "  ",
+                &mp,
+            );
+        }
 
-    // Execute create hooks
-    if !config.hooks.create.run.is_empty()
-        || !config.hooks.create.copy.is_empty()
-        || !config.hooks.create.link.is_empty()
-    {
-        hooks::execute_hooks_lenient_with_mp(
-            &config.hooks.create,
-            &worktree_path,
-            &repo_root,
-            color_mode,
-            "  ",
-            &mp,
-        );
-    }
+        Ok(())
+    });
+
+    let worktree_path = match result {
+        Err(e) => {
+            if let Some(pb) = header_pb {
+                pb.finish_and_clear();
+            }
+            return Err(e);
+        }
+        Ok(path) => path,
+    };
 
     // Finish header: Adding → Added
     if let Some(pb) = header_pb {
@@ -294,12 +294,6 @@ pub fn cmd_new(
             color::success(color_mode, format!("Added {branch}"))
         ));
     }
-
-    // Add to zoxide if enabled
-    integrations::zoxide::add_to_zoxide_if_enabled(
-        &worktree_path,
-        config.integrations.zoxide.enabled,
-    )?;
 
     // Create tmux window or pane if enabled
     if use_tmux {
