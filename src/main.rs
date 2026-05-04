@@ -6,6 +6,7 @@ mod config;
 mod domain;
 mod hooks;
 mod integrations;
+mod path_utils;
 mod service;
 mod shell_completion;
 mod stdin;

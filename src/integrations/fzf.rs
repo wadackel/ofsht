@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::domain::worktree::{
-    calculate_relative_path, calculate_worktree_root_from_paths, display_path, WorktreeList,
+    calculate_relative_path, calculate_worktree_root_from_paths, WorktreeList,
 };
+use crate::path_utils::display_path;
 
 /// Item to display in fzf
 #[derive(Debug, Clone, PartialEq, Eq)]
