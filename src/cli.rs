@@ -248,21 +248,26 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
         candidates_set.insert("@".to_string());
     }
 
-    // Add branch names (existing behavior)
-    for branch in parse_worktree_list(&stdout) {
-        candidates_set.insert(branch);
+    // Parse the porcelain output once via the unified WorktreeList type.
+    let list = crate::domain::worktree::WorktreeList::parse(&stdout, None);
+
+    // Add branch names from non-main worktrees (excludes main automatically).
+    // This naturally fixes a latent inconsistency in the legacy parser
+    // (`worktree_index > 0` vs `> 1`) where main could leak into completion candidates
+    // when entry separators were missing in malformed porcelain.
+    for entry in list.non_main() {
+        if let Some(branch) = &entry.branch {
+            candidates_set.insert(branch.clone());
+        }
     }
 
     // Try to add relative paths (new behavior)
     if let Ok(repo_root) = crate::commands::common::get_main_repo_root() {
         if crate::config::Config::load_from_repo_root(&repo_root).is_ok() {
-            // Parse worktrees to get paths
-            let entries = crate::domain::worktree::parse_worktree_entries(&stdout, None);
-
-            // Collect all non-main worktree paths (skip index 0 which is main)
-            let worktree_paths: Vec<PathBuf> = entries
+            // Collect all non-main worktree paths
+            let worktree_paths: Vec<PathBuf> = list
+                .non_main()
                 .iter()
-                .skip(1)
                 .map(|entry| PathBuf::from(&entry.path))
                 .collect();
 
@@ -271,7 +276,7 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
                 crate::domain::worktree::calculate_worktree_root_from_paths(&worktree_paths)
             {
                 // Add relative paths for all non-main worktrees
-                for entry in entries.iter().skip(1) {
+                for entry in list.non_main() {
                     let worktree_path = PathBuf::from(&entry.path);
                     if let Some(rel_path) = crate::domain::worktree::calculate_relative_path(
                         &worktree_path,
@@ -292,52 +297,10 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// Parse git worktree list --porcelain output and extract branch names
-/// Excludes the main worktree (first worktree in the list)
-#[must_use]
-pub fn parse_worktree_list(output: &str) -> Vec<String> {
-    let mut branches = Vec::new();
-    let mut worktree_index = 0;
-    let mut current_branch: Option<String> = None;
-
-    for line in output.lines() {
-        if line.starts_with("worktree ") {
-            // Save previous worktree's branch (skip first/main worktree at index 0)
-            if let Some(branch) = current_branch.take() {
-                if worktree_index > 0 {
-                    branches.push(branch);
-                }
-            }
-            worktree_index += 1;
-        } else if line.starts_with("branch ") {
-            if let Some(branch_ref) = line.strip_prefix("branch ") {
-                // Strip refs/heads/ prefix
-                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
-                current_branch = Some(branch.to_string());
-            }
-        } else if line.is_empty() {
-            // End of worktree entry
-            if let Some(branch) = current_branch.take() {
-                if worktree_index > 1 {
-                    branches.push(branch);
-                }
-            }
-        }
-    }
-
-    // Handle last worktree if exists
-    if let Some(branch) = current_branch {
-        if worktree_index > 1 {
-            branches.push(branch);
-        }
-    }
-
-    branches
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::worktree::WorktreeList;
 
     #[test]
     fn verify_cli() {
@@ -400,8 +363,18 @@ mod tests {
         }
     }
 
+    /// Helper: extract branch names from non-main worktrees, mirroring the
+    /// completion path inside `list_git_worktrees`.
+    fn worktree_list_branches(output: &str) -> Vec<String> {
+        WorktreeList::parse(output, None)
+            .non_main()
+            .iter()
+            .filter_map(|e| e.branch.clone())
+            .collect()
+    }
+
     #[test]
-    fn test_parse_worktree_list_excludes_main() {
+    fn test_worktree_list_branches_excludes_main() {
         let output = "worktree /path/to/main
 branch refs/heads/main
 
@@ -409,12 +382,12 @@ worktree /path/to/feature
 branch refs/heads/feature
 
 ";
-        let result = parse_worktree_list(output);
+        let result = worktree_list_branches(output);
         assert_eq!(result, vec!["feature"]);
     }
 
     #[test]
-    fn test_parse_worktree_list_multiple_worktrees() {
+    fn test_worktree_list_branches_multiple_worktrees() {
         let output = "worktree /path/to/main
 branch refs/heads/main
 
@@ -425,15 +398,33 @@ worktree /path/to/feature-b
 branch refs/heads/feature-b
 
 ";
-        let result = parse_worktree_list(output);
+        let result = worktree_list_branches(output);
         assert_eq!(result, vec!["feature-a", "feature-b"]);
     }
 
     #[test]
-    fn test_parse_worktree_list_empty() {
+    fn test_worktree_list_branches_empty() {
         let output = "";
-        let result = parse_worktree_list(output);
+        let result = worktree_list_branches(output);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_completion_excludes_main_branch_for_malformed_separator_missing() {
+        // Regression for a latent bug in the previous standalone branch-list parser
+        // (worktree-index threshold mismatch): when entry separators were missing
+        // the main branch leaked into completion candidates. WorktreeList::parse uses
+        // index-0-is-main semantics so the main branch must never appear here.
+        let output = "worktree /path/to/main\nbranch refs/heads/main\nworktree /path/to/feat\nbranch refs/heads/feat\n";
+        let result = worktree_list_branches(output);
+        assert!(
+            !result.contains(&"main".to_string()),
+            "main branch must not be in completion candidates even with missing entry separators: {result:?}"
+        );
+        assert!(
+            result.contains(&"feat".to_string()),
+            "non-main branch must still be present: {result:?}"
+        );
     }
 
     #[test]
