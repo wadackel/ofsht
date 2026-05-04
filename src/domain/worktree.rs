@@ -4,7 +4,6 @@
 
 use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
-use std::process::Command;
 
 use crate::color;
 use crate::commands::common::canonicalize_allow_missing;
@@ -170,32 +169,6 @@ impl WorktreeList {
     pub fn current(&self) -> Option<&WorktreeEntry> {
         self.entries.iter().find(|e| e.is_active)
     }
-}
-
-/// Get the last commit time for a worktree
-///
-/// Returns None if the worktree has no commits or if git command fails
-#[must_use]
-pub fn get_last_commit_time(worktree_path: &std::path::Path) -> Option<DateTime<Utc>> {
-    let output = Command::new("git")
-        .args([
-            "-C",
-            &worktree_path.display().to_string(),
-            "log",
-            "-1",
-            "--format=%ct",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let timestamp: i64 = timestamp_str.parse().ok()?;
-
-    DateTime::from_timestamp(timestamp, 0)
 }
 
 /// Lexically normalize a path by resolving `.` and `..` components
@@ -885,23 +858,6 @@ mod tests {
             let result = display_path(&home);
             assert_eq!(result, "~");
         }
-    }
-
-    #[test]
-    fn test_get_last_commit_time_current_repo() {
-        // Test with current repository (should have commits)
-        let current_dir = std::env::current_dir().unwrap();
-        let result = get_last_commit_time(&current_dir);
-        // Current repo should have commits
-        assert!(result.is_some(), "Current repository should have commits");
-    }
-
-    #[test]
-    fn test_get_last_commit_time_nonexistent_path() {
-        // Test with non-existent path (should return None)
-        let nonexistent = std::path::PathBuf::from("/nonexistent/path/to/worktree");
-        let result = get_last_commit_time(&nonexistent);
-        assert!(result.is_none(), "Non-existent path should return None");
     }
 
     #[test]

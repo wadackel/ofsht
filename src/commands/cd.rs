@@ -2,13 +2,13 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::commands::common::get_main_repo_root;
 use crate::config;
 use crate::domain::worktree::{normalize_absolute_path, WorktreeList};
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
+use crate::integrations::git::{GitClient, RealGitClient};
 
 /// Navigate to a worktree by branch name
 ///
@@ -19,17 +19,8 @@ use crate::integrations::fzf::FzfPicker;
 /// - Fzf is required but not available
 pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Result<()> {
     // Get worktree list
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .context("Failed to execute git worktree list")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree list failed: {stderr}");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let git = RealGitClient;
+    let stdout = git.list_worktrees(None)?;
 
     // Resolve name: CLI arg > stdin (when piped) > fzf
     let resolved_name: Option<String> = match name {

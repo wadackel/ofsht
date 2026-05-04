@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashSet;
-use std::process::Command;
 use std::time::Duration;
 
 use crate::color;
@@ -13,6 +12,7 @@ use crate::domain::worktree::{display_path, WorktreeList};
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
+use crate::integrations::git::{GitClient, RealGitClient};
 
 /// Remove a worktree and optionally delete its branch
 /// This is a shared helper function used by both `cmd_rm_many` and `cmd_finish`
@@ -61,20 +61,13 @@ fn remove_worktree_internal(
     }
 
     // Remove worktree using git worktree remove
-    let output = Command::new("git")
-        .args(["worktree", "remove"])
-        .arg(worktree_path)
-        .current_dir(repo_root)
-        .output()
-        .context("Failed to execute git worktree remove")?;
-
-    if !output.status.success() {
+    let git = RealGitClient;
+    if let Err(e) = git.remove_worktree(worktree_path, Some(repo_root)) {
         // Clear header spinner on error
         if let Some(pb) = header_pb {
             pb.finish_and_clear();
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree remove failed: {stderr}");
+        return Err(e);
     }
 
     // Finish header: Removing → Removed
@@ -88,13 +81,7 @@ fn remove_worktree_internal(
 
     // Try to delete the branch (optional, may fail if branch doesn't exist)
     if let Some(branch) = branch_name {
-        let branch_output = Command::new("git")
-            .args(["branch", "-D", branch])
-            .current_dir(repo_root)
-            .output()
-            .context("Failed to execute git branch -D")?;
-
-        if branch_output.status.success() {
+        if git.remove_branch(branch, Some(repo_root)).unwrap_or(false) {
             hooks::emit_line(
                 mp,
                 is_tty,
@@ -126,18 +113,8 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
     let config = config::Config::load_from_repo_root(&repo_root)?;
 
     // Get worktree list once for all targets
-    let list_output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&repo_root)
-        .output()
-        .context("Failed to execute git worktree list --porcelain")?;
-
-    if !list_output.status.success() {
-        let stderr = String::from_utf8_lossy(&list_output.stderr);
-        anyhow::bail!("git worktree list failed: {stderr}");
-    }
-
-    let list_stdout = String::from_utf8_lossy(&list_output.stdout);
+    let git = RealGitClient;
+    let list_stdout = git.list_worktrees(Some(&repo_root))?;
 
     // Resolve targets: CLI args > stdin (when piped) > fzf
     let targets: Vec<String> = if targets.is_empty() {

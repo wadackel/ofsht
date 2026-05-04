@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use std::process::Command;
 use std::time::Duration;
 
 use crate::color;
@@ -10,7 +9,9 @@ use crate::commands::common::get_main_repo_root;
 use crate::config;
 use crate::domain::worktree::display_path;
 use crate::hooks;
-use crate::integrations;
+use crate::integrations::git::RealGitClient;
+use crate::integrations::zoxide::{is_zoxide_available, RealZoxideClient};
+use crate::service::WorktreeService;
 
 /// Create a new worktree (simple version without tmux/GitHub integration)
 ///
@@ -59,35 +60,6 @@ pub fn cmd_create(
         repo_root.join(&path_template)
     };
 
-    // Create worktree using git worktree add
-    let mut cmd = Command::new("git");
-
-    if let Some(sp) = start_point {
-        // Create new branch with start point
-        cmd.args(["worktree", "add", "-b", branch])
-            .arg(&worktree_path)
-            .arg(sp);
-    } else {
-        // No start_point: try to checkout existing branch, or create from HEAD
-        // Check if branch exists
-        let branch_exists = Command::new("git")
-            .args(["rev-parse", "--verify", branch])
-            .current_dir(&repo_root)
-            .output()
-            .is_ok_and(|o| o.status.success());
-
-        if branch_exists {
-            // Checkout existing branch (no -b flag)
-            cmd.args(["worktree", "add"])
-                .arg(&worktree_path)
-                .arg(branch);
-        } else {
-            // Create new branch from HEAD
-            cmd.args(["worktree", "add", "-b", branch])
-                .arg(&worktree_path);
-        }
-    }
-
     let mp = MultiProgress::new();
     let is_tty = color_mode.should_colorize();
 
@@ -106,48 +78,68 @@ pub fn cmd_create(
         None
     };
 
-    let output = cmd.output().context("Failed to execute git worktree add")?;
+    // Resolve zoxide gating before handing control to the service so the
+    // service does not need to know about zoxide-availability detection.
+    let zoxide_enabled = config.integrations.zoxide.enabled && is_zoxide_available();
 
-    if !output.status.success() {
-        if let Some(pb) = header_pb {
-            pb.finish_and_clear();
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree add failed: {stderr}");
-    }
+    let service = WorktreeService::new(RealGitClient, RealZoxideClient);
 
-    // non-TTY: print header before hooks (rm/sync pattern)
-    let created_msg = format!("Created worktree at: {}", display_path(&worktree_path));
-    if !is_tty {
-        eprintln!("{}", color::success(color_mode, &created_msg));
-    }
-
-    // Execute create hooks
-    if !config.hooks.create.run.is_empty()
-        || !config.hooks.create.copy.is_empty()
-        || !config.hooks.create.link.is_empty()
-    {
-        hooks::execute_hooks_lenient_with_mp(
-            &config.hooks.create,
-            &worktree_path,
-            &repo_root,
-            color_mode,
-            "  ",
-            &mp,
-        );
-    }
-
-    // Finish header: Creating → Created
-    if let Some(pb) = header_pb {
-        pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
-        pb.finish_with_message(format!("{}", color::success(color_mode, created_msg)));
-    }
-
-    // Add to zoxide if enabled
-    integrations::zoxide::add_to_zoxide_if_enabled(
+    let hook_actions = &config.hooks.create;
+    let result = service.create_worktree(
+        branch,
         &worktree_path,
-        config.integrations.zoxide.enabled,
-    )?;
+        start_point,
+        &repo_root,
+        zoxide_enabled,
+        |path| {
+            // non-TTY: print "Created..." header before hooks (matches rm/sync pattern)
+            if !is_tty {
+                eprintln!(
+                    "{}",
+                    color::success(
+                        color_mode,
+                        format!("Created worktree at: {}", display_path(path))
+                    )
+                );
+            }
 
-    Ok(())
+            if !hook_actions.run.is_empty()
+                || !hook_actions.copy.is_empty()
+                || !hook_actions.link.is_empty()
+            {
+                hooks::execute_hooks_lenient_with_mp(
+                    hook_actions,
+                    path,
+                    &repo_root,
+                    color_mode,
+                    "  ",
+                    &mp,
+                );
+            }
+
+            Ok(())
+        },
+    );
+
+    match result {
+        Err(e) => {
+            if let Some(pb) = header_pb {
+                pb.finish_and_clear();
+            }
+            Err(e)
+        }
+        Ok(path) => {
+            if let Some(pb) = header_pb {
+                pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
+                pb.finish_with_message(format!(
+                    "{}",
+                    color::success(
+                        color_mode,
+                        format!("Created worktree at: {}", display_path(&path))
+                    )
+                ));
+            }
+            Ok(())
+        }
+    }
 }

@@ -7,7 +7,8 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::PathBuf;
-use std::process::Command;
+
+use crate::integrations::git::{GitClient, RealGitClient};
 
 /// Git worktree management tool
 #[derive(Parser, Debug)]
@@ -127,27 +128,17 @@ pub enum Commands {
 /// Excludes symbolic refs like origin/HEAD
 #[must_use]
 pub fn list_git_refs(current: &OsStr) -> Vec<CompletionCandidate> {
-    let output = Command::new("git")
-        .args([
-            "for-each-ref",
-            "--format=%(refname:short)%09%(symref)",
-            "refs/heads",
-            "refs/remotes",
-            "refs/tags",
-        ])
-        .output();
-
-    let Ok(output) = output else {
+    let git = RealGitClient;
+    let Ok(stdout) = git.for_each_ref(
+        &["refs/heads", "refs/remotes", "refs/tags"],
+        "%(refname:short)%09%(symref)",
+    ) else {
         return Vec::new();
     };
 
-    if !output.status.success() {
-        return Vec::new();
-    }
-
     let prefix = current.to_string_lossy();
 
-    String::from_utf8_lossy(&output.stdout)
+    stdout
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
@@ -178,26 +169,17 @@ pub fn list_git_refs(current: &OsStr) -> Vec<CompletionCandidate> {
 #[must_use]
 #[allow(dead_code)] // Reserved for future use
 pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
-    let output = Command::new("git")
-        .args([
-            "for-each-ref",
-            "--format=%(refname:short)%09%(symref)",
-            "refs/heads",
-            "refs/remotes",
-        ])
-        .output();
-
-    let Ok(output) = output else {
+    let git = RealGitClient;
+    let Ok(stdout) = git.for_each_ref(
+        &["refs/heads", "refs/remotes"],
+        "%(refname:short)%09%(symref)",
+    ) else {
         return Vec::new();
     };
 
-    if !output.status.success() {
-        return Vec::new();
-    }
-
     let prefix = current.to_string_lossy();
 
-    String::from_utf8_lossy(&output.stdout)
+    stdout
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
@@ -225,20 +207,12 @@ pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
 /// Filters worktree branch names by the provided prefix
 /// Includes "@" as the main worktree
 pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .output();
-
-    let Ok(output) = output else {
+    let git = RealGitClient;
+    let Ok(stdout) = git.list_worktrees(None) else {
         return Vec::new();
     };
 
-    if !output.status.success() {
-        return Vec::new();
-    }
-
     let prefix = current.to_string_lossy();
-    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Use HashSet to deduplicate branch names and relative paths
     let mut candidates_set = HashSet::new();

@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use std::process::Command;
 use std::time::Duration;
 
 use crate::color;
@@ -11,6 +10,7 @@ use crate::config;
 use crate::domain::worktree::normalize_absolute_path;
 use crate::hooks;
 use crate::integrations;
+use crate::integrations::git::{GitClient, RealGitClient};
 use crate::integrations::tmux::TmuxLauncher;
 
 /// Process a PR and return branch name and start point
@@ -23,25 +23,17 @@ fn process_pr(
     // Check if it's from a fork (cross-repository PR)
     let is_fork = pr.is_cross_repository;
 
+    let git = RealGitClient;
     if is_fork {
         // Fork PR - fetch PR ref from GitHub without checking out
-        let fetch_output = Command::new("git")
-            .args(["fetch", "origin", &format!("refs/pull/{number}/head")])
-            .current_dir(repo_root)
-            .output()
-            .context("Failed to execute git fetch")?;
-
-        if !fetch_output.status.success() {
-            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-            anyhow::bail!("git fetch PR ref failed: {stderr}");
-        }
+        git.fetch(
+            &["fetch", "origin", &format!("refs/pull/{number}/head")],
+            Some(repo_root),
+        )
+        .map_err(|e| anyhow::anyhow!("git fetch PR ref failed: {e}"))?;
 
         // Check if local branch with PR's name already exists
-        let branch_exists = Command::new("git")
-            .args(["rev-parse", "--verify", &pr.head_ref_name])
-            .current_dir(repo_root)
-            .output()
-            .is_ok_and(|o| o.status.success());
+        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root));
 
         eprintln!(
             "{}",
@@ -74,16 +66,8 @@ fn process_pr(
         }
     } else {
         // Same repository - fetch the branch
-        let fetch_output = Command::new("git")
-            .args(["fetch", "origin", &pr.head_ref_name])
-            .current_dir(repo_root)
-            .output()
-            .context("Failed to execute git fetch")?;
-
-        if !fetch_output.status.success() {
-            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-            anyhow::bail!("git fetch failed: {stderr}");
-        }
+        git.fetch(&["fetch", "origin", &pr.head_ref_name], Some(repo_root))
+            .map_err(|e| anyhow::anyhow!("git fetch failed: {e}"))?;
 
         eprintln!(
             "{}",
@@ -94,11 +78,7 @@ fn process_pr(
         );
 
         // Check if local branch already exists
-        let branch_exists = Command::new("git")
-            .args(["rev-parse", "--verify", &pr.head_ref_name])
-            .current_dir(repo_root)
-            .output()
-            .is_ok_and(|o| o.status.success());
+        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root));
 
         if branch_exists {
             // Existing local branch - use it directly
@@ -277,43 +257,13 @@ pub fn cmd_new(
         None
     };
 
-    // Create worktree using git worktree add
-    let mut cmd = Command::new("git");
-
-    if let Some(sp) = start_point {
-        // Create new branch with start point
-        cmd.args(["worktree", "add", "-b", branch])
-            .arg(&worktree_path)
-            .arg(sp);
-    } else {
-        // No start_point: try to checkout existing branch, or create from HEAD
-        // Check if branch exists
-        let branch_exists = Command::new("git")
-            .args(["rev-parse", "--verify", branch])
-            .current_dir(&repo_root)
-            .output()
-            .is_ok_and(|o| o.status.success());
-
-        if branch_exists {
-            // Checkout existing branch (no -b flag)
-            cmd.args(["worktree", "add"])
-                .arg(&worktree_path)
-                .arg(branch);
-        } else {
-            // Create new branch from HEAD
-            cmd.args(["worktree", "add", "-b", branch])
-                .arg(&worktree_path);
-        }
-    }
-
-    let output = cmd.output().context("Failed to execute git worktree add")?;
-
-    if !output.status.success() {
+    // Create worktree (RealGitClient handles the new/existing-branch dispatch internally)
+    let git = RealGitClient;
+    if let Err(e) = git.create_worktree(branch, &worktree_path, start_point, Some(&repo_root)) {
         if let Some(pb) = header_pb {
             pb.finish_and_clear();
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree add failed: {stderr}");
+        return Err(e);
     }
 
     // non-TTY: print header before hooks (rm/sync pattern)
