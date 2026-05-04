@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-04
+
+### Changed
+
+- Unify add and create worktree creation flows ([#105](https://github.com/wadackel/ofsht/pull/105))
+
+- Split path utils and table formatter into dedicated modules ([#104](https://github.com/wadackel/ofsht/pull/104))
+
+- Split hooks.rs into hooks/ submodule ([#103](https://github.com/wadackel/ofsht/pull/103))
+
+- Route all git ops through GitClient and connect WorktreeService ([#102](https://github.com/wadackel/ofsht/pull/102))
+
+- Unify worktree porcelain parsers into WorktreeList ([#101](https://github.com/wadackel/ofsht/pull/101))
+
+- Redistribute 48 tests from main.rs to owning modules ([#100](https://github.com/wadackel/ofsht/pull/100))
+
+
 ## [0.7.0] - 2026-05-03
 
 ### Added
