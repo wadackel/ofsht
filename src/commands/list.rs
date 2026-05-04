@@ -7,9 +7,11 @@ use std::path::PathBuf;
 
 use crate::color;
 use crate::commands::common::get_main_repo_root;
+use crate::commands::list_display::format_worktree_table;
 use crate::config::Config;
-use crate::domain::worktree::{format_worktree_table, normalize_absolute_path, WorktreeList};
+use crate::domain::worktree::WorktreeList;
 use crate::integrations::git::{GitClient, RealGitClient};
+use crate::path_utils::normalize_absolute_path;
 
 /// List all worktrees
 ///

@@ -7,10 +7,10 @@ use std::time::Duration;
 use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config;
-use crate::domain::worktree::display_path;
 use crate::hooks;
 use crate::integrations::git::RealGitClient;
 use crate::integrations::zoxide::{is_zoxide_available, RealZoxideClient};
+use crate::path_utils::display_path;
 use crate::service::WorktreeService;
 
 /// Create a new worktree (simple version without tmux/GitHub integration)

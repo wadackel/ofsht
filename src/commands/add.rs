@@ -7,11 +7,11 @@ use std::time::Duration;
 use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config;
-use crate::domain::worktree::normalize_absolute_path;
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::git::{GitClient, RealGitClient};
 use crate::integrations::tmux::TmuxLauncher;
+use crate::path_utils::normalize_absolute_path;
 
 /// Process a PR and return branch name and start point
 fn process_pr(

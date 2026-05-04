@@ -8,11 +8,12 @@ use std::time::Duration;
 use crate::color;
 use crate::commands::common::{get_main_repo_root, resolve_worktree_target};
 use crate::config;
-use crate::domain::worktree::{display_path, WorktreeList};
+use crate::domain::worktree::WorktreeList;
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
 use crate::integrations::git::{GitClient, RealGitClient};
+use crate::path_utils::display_path;
 
 /// Remove a worktree and optionally delete its branch
 /// This is a shared helper function used by both `cmd_rm_many` and `cmd_finish`

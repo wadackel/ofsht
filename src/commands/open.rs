@@ -5,13 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::color;
-use crate::commands::common::{canonicalize_allow_missing, get_main_repo_root};
+use crate::commands::common::get_main_repo_root;
 use crate::config;
 use crate::domain::worktree::{
     calculate_relative_path, calculate_worktree_root_from_paths, WorktreeList,
 };
 use crate::integrations::git::{GitClient, RealGitClient};
 use crate::integrations::tmux::{sanitize_window_name, RealTmuxLauncher, TmuxLauncher};
+use crate::path_utils::canonicalize_allow_missing;
 
 /// Worktree entry for the open command
 struct OpenWorktree {

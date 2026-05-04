@@ -5,10 +5,11 @@ use std::path::PathBuf;
 
 use crate::commands::common::get_main_repo_root;
 use crate::config;
-use crate::domain::worktree::{normalize_absolute_path, WorktreeList};
+use crate::domain::worktree::WorktreeList;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
 use crate::integrations::git::{GitClient, RealGitClient};
+use crate::path_utils::normalize_absolute_path;
 
 /// Navigate to a worktree by branch name
 ///

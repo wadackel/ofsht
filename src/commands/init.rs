@@ -6,7 +6,7 @@ use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config;
 use crate::config::template_generator::TemplateContext;
-use crate::domain::worktree::display_path;
+use crate::path_utils::display_path;
 
 /// Write config file if it doesn't exist (or force overwrite)
 fn write_config_if_needed(

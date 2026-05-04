@@ -7,6 +7,7 @@ pub mod cli;
 pub mod color;
 pub mod config;
 pub mod hooks;
+pub mod path_utils;
 pub mod service;
 pub mod stdin;
 

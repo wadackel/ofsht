@@ -3,10 +3,11 @@
 //! This module contains shared helper functions used across multiple commands.
 
 use anyhow::{Context, Result};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::domain::worktree::WorktreeList;
 use crate::integrations::git::{GitClient, RealGitClient};
+use crate::path_utils::canonicalize_allow_missing;
 
 /// Get the main repository root path
 ///
@@ -43,74 +44,6 @@ pub fn get_main_repo_root() -> Result<PathBuf> {
         .unwrap_or(abs_git_path);
 
     Ok(repo_root)
-}
-
-/// Canonicalize a path, even if it doesn't exist on the filesystem
-///
-/// For missing paths, canonicalize the deepest existing ancestor and append the tail.
-/// Relative paths are resolved from the current working directory.
-#[must_use]
-pub fn canonicalize_allow_missing(path: &Path) -> PathBuf {
-    // Convert relative paths to absolute using current_dir
-    let absolute_path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path))
-    };
-
-    // Normalize the path by processing . and .. components
-    let mut normalized = PathBuf::new();
-    for component in absolute_path.components() {
-        match component {
-            Component::CurDir => {
-                // Skip "." components
-            }
-            Component::ParentDir => {
-                // Pop the last component for ".."
-                normalized.pop();
-            }
-            _ => {
-                // Normal component (RootDir, Prefix, or Normal)
-                normalized.push(component);
-            }
-        }
-    }
-
-    // Try normal canonicalization first
-    if let Ok(canonical) = normalized.canonicalize() {
-        return canonical;
-    }
-
-    // Path doesn't exist - find the deepest existing ancestor
-    let mut current = normalized.as_path();
-    let mut tail_components = Vec::new();
-
-    loop {
-        // Record this component first (before checking parent)
-        if let Some(file_name) = current.file_name() {
-            tail_components.push(file_name);
-        }
-
-        if let Some(parent) = current.parent() {
-            if parent.exists() {
-                // Found an existing ancestor - canonicalize it
-                if let Ok(canonical_parent) = parent.canonicalize() {
-                    // Rebuild the path by appending the tail components
-                    let mut result = canonical_parent;
-                    for component in tail_components.iter().rev() {
-                        result = result.join(component);
-                    }
-                    return result;
-                }
-            }
-            // Move up to parent
-            current = parent;
-        } else {
-            // Reached the root without finding an existing ancestor
-            // Fall back to the normalized path
-            return normalized;
-        }
-    }
 }
 
 /// Resolve a worktree target to its canonical path and metadata
@@ -228,87 +161,4 @@ pub fn resolve_worktree_target(
         branch_name,
         is_current_worktree_removal,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_canonicalize_allow_missing_existing_path() {
-        // Test with existing path (current directory)
-        let current_dir = std::env::current_dir().unwrap();
-        let result = canonicalize_allow_missing(&current_dir);
-        // Should return canonicalized path
-        assert_eq!(result, current_dir.canonicalize().unwrap());
-    }
-
-    #[test]
-    fn test_canonicalize_allow_missing_nonexistent_absolute() {
-        // Test with nonexistent absolute path
-        let nonexistent = std::path::PathBuf::from("/nonexistent/path/to/worktree");
-        let result = canonicalize_allow_missing(&nonexistent);
-        // Should return the absolute path (may have symlinks resolved in existing parts)
-        assert!(result.is_absolute());
-        assert!(result.to_string_lossy().contains("nonexistent"));
-    }
-
-    #[test]
-    fn test_canonicalize_allow_missing_relative() {
-        // Test with relative path
-        let relative = std::path::PathBuf::from("./test/path");
-        let result = canonicalize_allow_missing(&relative);
-        // Should convert to absolute path
-        assert!(result.is_absolute());
-    }
-
-    #[test]
-    fn test_canonicalize_allow_missing_relative_nonexistent() {
-        // Test with nonexistent relative path
-        let relative = std::path::PathBuf::from("./nonexistent/test/path");
-        let result = canonicalize_allow_missing(&relative);
-        // Should convert to absolute path
-        assert!(result.is_absolute());
-        assert!(result.to_string_lossy().contains("nonexistent"));
-    }
-
-    #[test]
-    fn test_canonicalize_allow_missing_deep_nonexistent() {
-        // Test with deeply nested nonexistent path
-        let current_dir = std::env::current_dir().unwrap().canonicalize().unwrap();
-        let deep_path = current_dir.join("a/b/c/d/e/f/nonexistent");
-        let result = canonicalize_allow_missing(&deep_path);
-        // Should start with canonicalized current dir (not symlinked version)
-        assert!(
-            result.starts_with(&current_dir),
-            "Result {} should start with canonicalized current_dir {}",
-            result.display(),
-            current_dir.display()
-        );
-        assert!(result.to_string_lossy().contains("nonexistent"));
-    }
-
-    #[test]
-    fn test_canonicalize_allow_missing_parent_dots() {
-        // Test with parent directory references
-        let current_dir = std::env::current_dir().unwrap().canonicalize().unwrap();
-        let with_dots = current_dir.join("foo/../bar/./baz");
-        let result = canonicalize_allow_missing(&with_dots);
-        // Should resolve . and .. references even when path doesn't exist
-        let expected = current_dir.join("bar/baz");
-        assert_eq!(
-            result, expected,
-            "Should normalize .. and . even in nonexistent paths"
-        );
-        // Result should not contain literal . or .. components
-        let result_str = result.to_string_lossy();
-        assert!(
-            !result_str.contains("/./"),
-            "Result should not contain /./: {result_str}"
-        );
-        assert!(
-            !result_str.contains("/../"),
-            "Result should not contain /../: {result_str}"
-        );
-    }
 }
