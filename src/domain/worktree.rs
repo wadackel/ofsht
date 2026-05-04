@@ -848,4 +848,525 @@ mod tests {
             Some("team/alice/fix".to_string())
         );
     }
+
+    // --- Tests moved from src/main.rs (mechanical relocation, behavior preserved) ---
+
+    #[test]
+    fn test_display_path_under_home() {
+        // Test path under home directory
+        if let Some(home) = dirs::home_dir() {
+            let test_path = home.join("test/path");
+            let result = display_path(&test_path);
+            assert!(result.starts_with("~/"));
+            assert_eq!(result, "~/test/path");
+        }
+    }
+
+    #[test]
+    fn test_display_path_outside_home_unix_exact() {
+        // Test path outside home directory (Unix-only exact-match assertion).
+        // Renamed from `test_display_path_outside_home` because that name is already
+        // used above for a platform-aware (cfg!(windows)) version that only checks
+        // the leading '~' is absent. This keeps both assertions.
+        let test_path = std::path::PathBuf::from("/tmp/test/path");
+        let result = display_path(&test_path);
+        assert_eq!(result, "/tmp/test/path");
+    }
+
+    #[test]
+    fn test_display_path_home_itself() {
+        // Test home directory itself
+        if let Some(home) = dirs::home_dir() {
+            let result = display_path(&home);
+            assert_eq!(result, "~");
+        }
+    }
+
+    #[test]
+    fn test_parse_worktree_entries_single_worktree() {
+        let output = "worktree /path/to/main
+HEAD 1234567890abcdef1234567890abcdef
+branch refs/heads/main
+
+";
+        let result = parse_worktree_entries(output, None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/path/to/main");
+        assert_eq!(result[0].branch, Some("main".to_string()));
+        // Hash should be first 8 chars of HEAD
+        assert_eq!(result[0].hash, "12345678");
+    }
+
+    #[test]
+    fn test_parse_worktree_entries_multiple_worktrees() {
+        let output = "worktree /path/to/main
+HEAD 1234567890abcdef1234567890abcdef
+branch refs/heads/main
+
+worktree /path/to/feature
+HEAD abcdef1234567890abcdef1234567890
+branch refs/heads/feature
+
+worktree /path/to/bugfix
+HEAD fedcba0987654321fedcba0987654321
+branch refs/heads/bugfix
+
+";
+        let result = parse_worktree_entries(output, None);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].path, "/path/to/main");
+        assert_eq!(result[0].branch, Some("main".to_string()));
+        assert_eq!(result[0].hash, "12345678");
+
+        assert_eq!(result[1].path, "/path/to/feature");
+        assert_eq!(result[1].branch, Some("feature".to_string()));
+        assert_eq!(result[1].hash, "abcdef12");
+
+        assert_eq!(result[2].path, "/path/to/bugfix");
+        assert_eq!(result[2].branch, Some("bugfix".to_string()));
+        assert_eq!(result[2].hash, "fedcba09");
+    }
+
+    #[test]
+    fn test_parse_worktree_entries_detached_head() {
+        let output = "worktree /path/to/main
+HEAD 1234567890abcdef1234567890abcdef
+detached
+
+worktree /path/to/feature
+HEAD abcdef1234567890abcdef1234567890
+branch refs/heads/feature
+
+";
+        let result = parse_worktree_entries(output, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, "/path/to/main");
+        assert_eq!(result[0].branch, None);
+        assert_eq!(result[0].hash, "12345678");
+
+        assert_eq!(result[1].path, "/path/to/feature");
+        assert_eq!(result[1].branch, Some("feature".to_string()));
+        assert_eq!(result[1].hash, "abcdef12");
+    }
+
+    #[test]
+    fn test_parse_worktree_entries_empty() {
+        let output = "";
+        let result = parse_worktree_entries(output, None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_worktree_entries_with_active_path() {
+        let output = "worktree /path/to/main
+HEAD 1234567890abcdef1234567890abcdef
+branch refs/heads/main
+
+worktree /path/to/feature
+HEAD abcdef1234567890abcdef1234567890
+branch refs/heads/feature
+
+";
+        let active_path = std::path::PathBuf::from("/path/to/feature");
+        let result = parse_worktree_entries(output, Some(&active_path));
+
+        assert_eq!(result.len(), 2);
+        assert!(!result[0].is_active);
+        assert!(result[1].is_active);
+    }
+
+    #[test]
+    fn test_parse_worktree_entries_without_active_path() {
+        let output = "worktree /path/to/main
+HEAD 1234567890abcdef1234567890abcdef
+branch refs/heads/main
+
+worktree /path/to/feature
+HEAD abcdef1234567890abcdef1234567890
+branch refs/heads/feature
+
+";
+        let result = parse_worktree_entries(output, None);
+
+        assert_eq!(result.len(), 2);
+        assert!(!result[0].is_active);
+        assert!(!result[1].is_active);
+    }
+
+    #[test]
+    fn test_get_last_commit_time_current_repo() {
+        // Test with current repository (should have commits)
+        let current_dir = std::env::current_dir().unwrap();
+        let result = get_last_commit_time(&current_dir);
+        // Current repo should have commits
+        assert!(result.is_some(), "Current repository should have commits");
+    }
+
+    #[test]
+    fn test_get_last_commit_time_nonexistent_path() {
+        // Test with non-existent path (should return None)
+        let nonexistent = std::path::PathBuf::from("/nonexistent/path/to/worktree");
+        let result = get_last_commit_time(&nonexistent);
+        assert!(result.is_none(), "Non-existent path should return None");
+    }
+
+    #[test]
+    fn test_format_worktree_table_default_no_path() {
+        let entries = vec![WorktreeEntry {
+            path: "/path/to/main".to_string(),
+            branch: Some("main".to_string()),
+            hash: "a1b2c3d4".to_string(),
+            is_active: false,
+        }];
+        let commit_times = vec![Some(
+            DateTime::from_timestamp(Utc::now().timestamp() - 3600, 0).unwrap(),
+        )];
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            false,
+            crate::color::ColorMode::Never,
+            None,
+        );
+        assert_eq!(result.len(), 1);
+        // Line should contain hash, branch, and timestamp (no path)
+        assert!(!result[0].contains("/path/to/main"));
+        // Main worktree (first entry) should be displayed as [@]
+        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("a1b2c3d4"));
+    }
+
+    #[test]
+    fn test_format_worktree_table_with_path() {
+        let entries = vec![WorktreeEntry {
+            path: "/path/to/main".to_string(),
+            branch: Some("main".to_string()),
+            hash: "a1b2c3d4".to_string(),
+            is_active: false,
+        }];
+        let commit_times = vec![Some(
+            DateTime::from_timestamp(Utc::now().timestamp() - 3600, 0).unwrap(),
+        )];
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            true,
+            crate::color::ColorMode::Never,
+            None,
+        );
+        assert_eq!(result.len(), 1);
+        // Line should contain path, hash, branch, and timestamp
+        assert!(result[0].contains("/path/to/main"));
+        // Main worktree (first entry) should be displayed as [@]
+        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("a1b2c3d4"));
+    }
+
+    #[test]
+    fn test_format_worktree_table_multiple_entries() {
+        let entries = vec![
+            WorktreeEntry {
+                path: "/path/to/main".to_string(),
+                branch: Some("main".to_string()),
+                hash: "a1b2c3d4".to_string(),
+                is_active: false,
+            },
+            WorktreeEntry {
+                path: "/path/to/feature-branch".to_string(),
+                branch: Some("feature".to_string()),
+                hash: "e5f6g7h8".to_string(),
+                is_active: false,
+            },
+        ];
+        let commit_times = vec![
+            Some(DateTime::from_timestamp(Utc::now().timestamp() - 3600, 0).unwrap()),
+            None,
+        ];
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            false,
+            crate::color::ColorMode::Never,
+            None,
+        );
+        assert_eq!(result.len(), 2);
+        // Both lines should have same structure (no paths)
+        assert!(!result[0].contains("/path/to/main"));
+        // Main worktree (first entry) should be displayed as [@]
+        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("a1b2c3d4"));
+        assert!(!result[1].contains("/path/to/feature-branch"));
+        assert!(result[1].contains("[feature]"));
+        assert!(result[1].contains("e5f6g7h8"));
+        assert!(result[1].contains("–")); // No commit time
+    }
+
+    #[test]
+    fn test_format_worktree_table_column_alignment() {
+        let entries = vec![
+            WorktreeEntry {
+                path: "/short".to_string(),
+                branch: Some("a".to_string()),
+                hash: "12345678".to_string(),
+                is_active: false,
+            },
+            WorktreeEntry {
+                path: "/very/long/path/to/worktree".to_string(),
+                branch: Some("feature-branch".to_string()),
+                hash: "abcdefgh".to_string(),
+                is_active: false,
+            },
+        ];
+        let commit_times = vec![None, None];
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            true,
+            crate::color::ColorMode::Never,
+            None,
+        );
+        assert_eq!(result.len(), 2);
+
+        // Verify that both lines contain the expected content
+        assert!(result[0].contains("/short"));
+        // Main worktree (first entry) should be displayed as [@]
+        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("12345678"));
+        assert!(result[1].contains("/very/long/path/to/worktree"));
+        assert!(result[1].contains("[feature-branch]"));
+        assert!(result[1].contains("abcdefgh"));
+
+        // Both lines should end with the same timestamp placeholder
+        assert!(result[0].ends_with("–"));
+        assert!(result[1].ends_with("–"));
+    }
+
+    #[test]
+    fn test_format_worktree_table_detached_head() {
+        let entries = vec![WorktreeEntry {
+            path: "/path/to/detached".to_string(),
+            branch: None,
+            hash: "deadbeef".to_string(),
+            is_active: false,
+        }];
+        let commit_times = vec![None];
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            false,
+            crate::color::ColorMode::Never,
+            None,
+        );
+        assert_eq!(result.len(), 1);
+        // Main worktree (first entry) is always [@], even if detached
+        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("deadbeef"));
+        assert!(result[0].contains("–"));
+    }
+
+    #[test]
+    fn test_format_worktree_table_active_marker() {
+        let entries = vec![
+            WorktreeEntry {
+                path: "/path/to/main".to_string(),
+                branch: Some("main".to_string()),
+                hash: "a1b2c3d4".to_string(),
+                is_active: false,
+            },
+            WorktreeEntry {
+                path: "/path/to/feature".to_string(),
+                branch: Some("feature".to_string()),
+                hash: "e5f6g7h8".to_string(),
+                is_active: true,
+            },
+        ];
+        let commit_times = vec![None, None];
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            false,
+            crate::color::ColorMode::Never,
+            None,
+        );
+        assert_eq!(result.len(), 2);
+        // First entry (inactive) should have space prefix
+        assert!(result[0].starts_with("  "));
+        // Second entry (active) should have * prefix
+        assert!(result[1].starts_with("* "));
+        assert!(result[1].contains("[feature]"));
+    }
+
+    #[test]
+    fn test_format_worktree_table_active_marker_with_path() {
+        let entries = vec![
+            WorktreeEntry {
+                path: "/path/to/main".to_string(),
+                branch: Some("main".to_string()),
+                hash: "a1b2c3d4".to_string(),
+                is_active: false,
+            },
+            WorktreeEntry {
+                path: "/path/to/feature".to_string(),
+                branch: Some("feature".to_string()),
+                hash: "e5f6g7h8".to_string(),
+                is_active: true,
+            },
+        ];
+        let commit_times = vec![None, None];
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            true,
+            crate::color::ColorMode::Never,
+            None,
+        );
+        assert_eq!(result.len(), 2);
+        // Both entries should have marker prefix (space or *)
+        assert!(result[0].starts_with("  "));
+        assert!(result[1].starts_with("* "));
+    }
+
+    #[test]
+    fn test_format_worktree_table_with_relative_paths() {
+        // Test that relative paths are displayed when config is provided
+        use crate::config::{Config, Hooks, IntegrationsConfig, WorktreeConfig};
+
+        let entries = vec![
+            WorktreeEntry {
+                path: "/Users/test/repo-worktrees/main".to_string(),
+                branch: Some("main".to_string()),
+                hash: "a1b2c3d4".to_string(),
+                is_active: false,
+            },
+            WorktreeEntry {
+                path: "/Users/test/repo-worktrees/feature".to_string(),
+                branch: Some("feature".to_string()),
+                hash: "e5f6g7h8".to_string(),
+                is_active: false,
+            },
+            WorktreeEntry {
+                path: "/Users/test/repo-worktrees/docs/tweak".to_string(),
+                branch: Some("docs/tweak".to_string()),
+                hash: "i9j0k1l2".to_string(),
+                is_active: true,
+            },
+        ];
+        let commit_times = vec![None, None, None];
+
+        let config = Config {
+            worktree: WorktreeConfig {
+                dir: "../{repo}-worktrees/{branch}".to_string(),
+            },
+            hooks: Hooks::default(),
+            integrations: IntegrationsConfig::default(),
+        };
+
+        let result = format_worktree_table(
+            &entries,
+            &commit_times,
+            false,
+            crate::color::ColorMode::Never,
+            Some(&config),
+        );
+
+        assert_eq!(result.len(), 3);
+
+        // Main worktree (index 0) should have blank relative path column
+        // Format: "  a1b2c3d4            [@]  unknown" (extra spaces where rel_path would be)
+        let main_line = &result[0];
+        assert!(main_line.contains("a1b2c3d4"));
+        assert!(main_line.contains("[@]"));
+
+        // Feature worktree should show "feature" as relative path
+        // Format: "  e5f6g7h8  feature  [feature]  unknown"
+        let feature_line = &result[1];
+        assert!(feature_line.contains("e5f6g7h8"));
+        assert!(feature_line.contains("feature"));
+        assert!(feature_line.contains("[feature]"));
+
+        // Nested worktree should show "docs/tweak" as relative path
+        // Format: "* i9j0k1l2  docs/tweak  [docs/tweak]  unknown"
+        let nested_line = &result[2];
+        assert!(nested_line.contains("i9j0k1l2"));
+        assert!(nested_line.contains("docs/tweak"));
+        assert!(nested_line.contains("[docs/tweak]"));
+        assert!(nested_line.starts_with("* ")); // Active marker
+    }
+
+    // Tests for parse_simple_worktree_entries
+    #[test]
+    fn test_parse_simple_worktree_entries_single() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+";
+        let result = parse_simple_worktree_entries(output);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/path/to/main");
+        assert_eq!(result[0].branch, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_parse_simple_worktree_entries_multiple() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+worktree /path/to/bugfix
+branch refs/heads/bugfix
+
+";
+        let result = parse_simple_worktree_entries(output);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].path, "/path/to/main");
+        assert_eq!(result[0].branch, Some("main".to_string()));
+        assert_eq!(result[1].path, "/path/to/feature");
+        assert_eq!(result[1].branch, Some("feature".to_string()));
+        assert_eq!(result[2].path, "/path/to/bugfix");
+        assert_eq!(result[2].branch, Some("bugfix".to_string()));
+    }
+
+    #[test]
+    fn test_parse_simple_worktree_entries_detached() {
+        let output = "worktree /path/to/main
+detached
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        let result = parse_simple_worktree_entries(output);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, "/path/to/main");
+        assert_eq!(result[0].branch, None);
+        assert_eq!(result[1].path, "/path/to/feature");
+        assert_eq!(result[1].branch, Some("feature".to_string()));
+    }
+
+    #[test]
+    fn test_parse_simple_worktree_entries_empty() {
+        let output = "";
+        let result = parse_simple_worktree_entries(output);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_simple_worktree_entries_no_blank_lines() {
+        // Test without trailing blank lines
+        let output = "worktree /path/to/main
+branch refs/heads/main";
+        let result = parse_simple_worktree_entries(output);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/path/to/main");
+        assert_eq!(result[0].branch, Some("main".to_string()));
+    }
 }
