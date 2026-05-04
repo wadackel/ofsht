@@ -412,3 +412,203 @@ pub fn resolve_worktree_target(
         is_current_worktree_removal,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_find_worktree_by_branch_finds_path() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+worktree /path/to/bugfix
+branch refs/heads/bugfix
+
+";
+        let result = find_worktree_by_branch(output, "feature");
+        assert_eq!(result, Some("/path/to/feature".to_string()));
+    }
+
+    #[test]
+    fn test_find_worktree_by_branch_not_found() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        let result = find_worktree_by_branch(output, "nonexistent");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_worktree_by_branch_main_not_found() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        // Main worktree should not be found (it's excluded)
+        let result = find_worktree_by_branch(output, "main");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_worktree_by_path_exact_match() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+worktree /path/to/bugfix
+branch refs/heads/bugfix
+
+";
+        let result = find_worktree_by_path(output, &PathBuf::from("/path/to/feature"));
+        assert_eq!(result, Some("/path/to/feature".to_string()));
+    }
+
+    #[test]
+    fn test_find_worktree_by_path_not_found() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        let result = find_worktree_by_path(output, &PathBuf::from("/path/to/nonexistent"));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_worktree_by_path_main_excluded() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        // Main worktree should not be found (it's excluded)
+        let result = find_worktree_by_path(output, &PathBuf::from("/path/to/main"));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_is_main_worktree_by_path() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        assert!(is_main_worktree(output, "/path/to/main"));
+        assert!(!is_main_worktree(output, "/path/to/feature"));
+        assert!(!is_main_worktree(output, "/nonexistent"));
+    }
+
+    #[test]
+    fn test_is_main_worktree_by_branch() {
+        let output = "worktree /path/to/main
+branch refs/heads/develop
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        // "@" is always treated as main worktree
+        assert!(is_main_worktree(output, "@"));
+        // Branch name matching main worktree's branch is also considered main
+        assert!(is_main_worktree(output, "develop"));
+        assert!(!is_main_worktree(output, "feature"));
+    }
+
+    #[test]
+    fn test_canonicalize_allow_missing_existing_path() {
+        // Test with existing path (current directory)
+        let current_dir = std::env::current_dir().unwrap();
+        let result = canonicalize_allow_missing(&current_dir);
+        // Should return canonicalized path
+        assert_eq!(result, current_dir.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_canonicalize_allow_missing_nonexistent_absolute() {
+        // Test with nonexistent absolute path
+        let nonexistent = std::path::PathBuf::from("/nonexistent/path/to/worktree");
+        let result = canonicalize_allow_missing(&nonexistent);
+        // Should return the absolute path (may have symlinks resolved in existing parts)
+        assert!(result.is_absolute());
+        assert!(result.to_string_lossy().contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_canonicalize_allow_missing_relative() {
+        // Test with relative path
+        let relative = std::path::PathBuf::from("./test/path");
+        let result = canonicalize_allow_missing(&relative);
+        // Should convert to absolute path
+        assert!(result.is_absolute());
+    }
+
+    #[test]
+    fn test_canonicalize_allow_missing_relative_nonexistent() {
+        // Test with nonexistent relative path
+        let relative = std::path::PathBuf::from("./nonexistent/test/path");
+        let result = canonicalize_allow_missing(&relative);
+        // Should convert to absolute path
+        assert!(result.is_absolute());
+        assert!(result.to_string_lossy().contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_canonicalize_allow_missing_deep_nonexistent() {
+        // Test with deeply nested nonexistent path
+        let current_dir = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let deep_path = current_dir.join("a/b/c/d/e/f/nonexistent");
+        let result = canonicalize_allow_missing(&deep_path);
+        // Should start with canonicalized current dir (not symlinked version)
+        assert!(
+            result.starts_with(&current_dir),
+            "Result {} should start with canonicalized current_dir {}",
+            result.display(),
+            current_dir.display()
+        );
+        assert!(result.to_string_lossy().contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_canonicalize_allow_missing_parent_dots() {
+        // Test with parent directory references
+        let current_dir = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let with_dots = current_dir.join("foo/../bar/./baz");
+        let result = canonicalize_allow_missing(&with_dots);
+        // Should resolve . and .. references even when path doesn't exist
+        let expected = current_dir.join("bar/baz");
+        assert_eq!(
+            result, expected,
+            "Should normalize .. and . even in nonexistent paths"
+        );
+        // Result should not contain literal . or .. components
+        let result_str = result.to_string_lossy();
+        assert!(
+            !result_str.contains("/./"),
+            "Result should not contain /./: {result_str}"
+        );
+        assert!(
+            !result_str.contains("/../"),
+            "Result should not contain /../: {result_str}"
+        );
+    }
+}

@@ -334,3 +334,141 @@ pub fn parse_worktree_list(output: &str) -> Vec<String> {
 
     branches
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_list_git_branches_returns_branches_in_git_repo() {
+        // When running in a git repo, should return branch list (at least one branch exists)
+        use std::ffi::OsStr;
+        let result = list_git_branches(OsStr::new(""));
+        // In a valid git repo, there should be at least one branch
+        assert!(
+            !result.is_empty(),
+            "Should return branches when in git repo"
+        );
+    }
+
+    #[test]
+    fn test_list_git_branches_returns_completion_candidates() {
+        // Verify that the returned values are valid CompletionCandidates
+        use std::ffi::OsStr;
+        let result = list_git_branches(OsStr::new(""));
+        for candidate in result {
+            // Each candidate should have non-empty value
+            assert!(
+                !candidate.get_value().is_empty(),
+                "Branch name should not be empty"
+            );
+        }
+    }
+
+    #[test]
+    fn test_list_git_branches_filters_by_prefix() {
+        // Test that branches are filtered by prefix
+        use std::ffi::OsStr;
+
+        // Get all branches first
+        let all_branches = list_git_branches(OsStr::new(""));
+
+        if let Some(first_branch) = all_branches.first() {
+            let branch_str = first_branch.get_value().to_string_lossy();
+            if branch_str.len() >= 2 {
+                let prefix = &branch_str[..2]; // Take first 2 characters as prefix
+                let filtered = list_git_branches(OsStr::new(prefix));
+
+                // All filtered branches should start with the prefix
+                for candidate in &filtered {
+                    let value = candidate.get_value().to_string_lossy();
+                    assert!(
+                        value.starts_with(prefix),
+                        "Branch '{value}' should start with prefix '{prefix}'"
+                    );
+                }
+
+                // Filtered list should be <= all branches
+                assert!(filtered.len() <= all_branches.len());
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_worktree_list_excludes_main() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature
+branch refs/heads/feature
+
+";
+        let result = parse_worktree_list(output);
+        assert_eq!(result, vec!["feature"]);
+    }
+
+    #[test]
+    fn test_parse_worktree_list_multiple_worktrees() {
+        let output = "worktree /path/to/main
+branch refs/heads/main
+
+worktree /path/to/feature-a
+branch refs/heads/feature-a
+
+worktree /path/to/feature-b
+branch refs/heads/feature-b
+
+";
+        let result = parse_worktree_list(output);
+        assert_eq!(result, vec!["feature-a", "feature-b"]);
+    }
+
+    #[test]
+    fn test_parse_worktree_list_empty() {
+        let output = "";
+        let result = parse_worktree_list(output);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_list_git_worktrees_includes_at_symbol() {
+        // Test that @ is included in worktree completion candidates
+        use std::ffi::OsStr;
+        let result = list_git_worktrees(OsStr::new(""));
+        // Should include @ as the first candidate (or at least include it)
+        let has_at = result.iter().any(|c| c.get_value() == "@");
+        assert!(has_at, "Completion candidates should include @");
+    }
+
+    #[test]
+    fn test_list_git_worktrees_filters_at_symbol() {
+        // Test that @ is filtered correctly by prefix
+        use std::ffi::OsStr;
+        let result = list_git_worktrees(OsStr::new("@"));
+        // Should include @ when prefix is @
+        let has_at = result.iter().any(|c| c.get_value() == "@");
+        assert!(
+            has_at,
+            "Completion candidates should include @ when prefix is @"
+        );
+    }
+
+    #[test]
+    fn test_list_git_worktrees_excludes_at_with_different_prefix() {
+        // Test that @ is excluded when prefix doesn't match
+        use std::ffi::OsStr;
+        let result = list_git_worktrees(OsStr::new("feature"));
+        // Should not include @ when prefix is "feature"
+        let has_at = result.iter().any(|c| c.get_value() == "@");
+        assert!(
+            !has_at,
+            "Completion candidates should not include @ when prefix is 'feature'"
+        );
+    }
+}
