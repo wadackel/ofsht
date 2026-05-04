@@ -2,71 +2,60 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::config::HookActions;
-use crate::hooks::HookExecutor;
 use crate::integrations::git::GitClient;
 use crate::integrations::zoxide::ZoxideClient;
 
-/// Worktree service that coordinates git operations, hooks, and zoxide
-#[allow(dead_code)]
-pub struct WorktreeService<G, H, Z>
+/// Worktree service that coordinates git creation and zoxide registration.
+///
+/// Hook execution is delegated to the caller via the `on_after_git`
+/// callback so the service stays free of UI state (`MultiProgress`,
+/// color mode, etc.).
+pub struct WorktreeService<G, Z>
 where
     G: GitClient,
-    H: HookExecutor,
     Z: ZoxideClient,
 {
     git_client: G,
-    hook_executor: H,
     zoxide_client: Z,
 }
 
-impl<G, H, Z> WorktreeService<G, H, Z>
+impl<G, Z> WorktreeService<G, Z>
 where
     G: GitClient,
-    H: HookExecutor,
     Z: ZoxideClient,
 {
-    /// Create a new worktree service
-    #[allow(dead_code)]
-    pub const fn new(git_client: G, hook_executor: H, zoxide_client: Z) -> Self {
+    pub const fn new(git_client: G, zoxide_client: Z) -> Self {
         Self {
             git_client,
-            hook_executor,
             zoxide_client,
         }
     }
 
-    /// Create a new worktree with hooks and zoxide integration
-    #[allow(dead_code)]
+    /// Create a worktree, then run `on_after_git`, then register with
+    /// zoxide when enabled.
     ///
-    /// # Arguments
-    /// * `branch` - Branch name for the new worktree
-    /// * `worktree_path` - Path where the worktree will be created
-    /// * `start_point` - Optional start point (branch, tag, or commit)
-    /// * `repo_root` - Main repository root path
-    /// * `hooks` - Hook actions to execute after creation
-    /// * `zoxide_enabled` - Whether to add the worktree to zoxide
-    ///
-    /// # Returns
-    /// The path to the created worktree
-    pub fn create_worktree(
+    /// The callback runs after `git worktree add` succeeds and before
+    /// zoxide registration; it is the caller's hook for printing
+    /// progress messages and executing user-defined create hooks.
+    /// Returning `Err` from the callback aborts the flow before zoxide
+    /// is touched.
+    pub fn create_worktree<F>(
         &self,
         branch: &str,
         worktree_path: &Path,
         start_point: Option<&str>,
         repo_root: &Path,
-        hooks: &HookActions,
         zoxide_enabled: bool,
-    ) -> Result<PathBuf> {
-        // Create worktree using git
+        on_after_git: F,
+    ) -> Result<PathBuf>
+    where
+        F: FnOnce(&Path) -> Result<()>,
+    {
         self.git_client
-            .create_worktree(branch, worktree_path, start_point)?;
+            .create_worktree(branch, worktree_path, start_point, Some(repo_root))?;
 
-        // Execute create hooks
-        self.hook_executor
-            .execute_hooks(hooks, worktree_path, repo_root)?;
+        on_after_git(worktree_path)?;
 
-        // Add to zoxide if enabled
         if zoxide_enabled {
             self.zoxide_client.add(worktree_path)?;
         }
@@ -78,76 +67,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integrations::git::tests::MockGitClient;
+    use std::cell::Cell;
     use std::path::PathBuf;
-
-    // Mock implementations for testing
-    struct MockGitClient {
-        should_fail: bool,
-    }
-
-    impl MockGitClient {
-        fn new() -> Self {
-            Self { should_fail: false }
-        }
-
-        fn with_failure() -> Self {
-            Self { should_fail: true }
-        }
-    }
-
-    impl GitClient for MockGitClient {
-        fn create_worktree(
-            &self,
-            _branch: &str,
-            _path: &Path,
-            _start_point: Option<&str>,
-        ) -> Result<()> {
-            if self.should_fail {
-                anyhow::bail!("Mock git failure");
-            }
-            Ok(())
-        }
-
-        fn list_worktrees(&self) -> Result<String> {
-            Ok(String::new())
-        }
-
-        fn remove_worktree(&self, _path: &Path) -> Result<()> {
-            Ok(())
-        }
-
-        fn remove_branch(&self, _branch: &str) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    struct MockHookExecutor {
-        should_fail: bool,
-    }
-
-    impl MockHookExecutor {
-        fn new() -> Self {
-            Self { should_fail: false }
-        }
-
-        fn with_failure() -> Self {
-            Self { should_fail: true }
-        }
-    }
-
-    impl HookExecutor for MockHookExecutor {
-        fn execute_hooks(
-            &self,
-            _actions: &HookActions,
-            _worktree_path: &Path,
-            _source_path: &Path,
-        ) -> Result<()> {
-            if self.should_fail {
-                anyhow::bail!("Mock hook failure");
-            }
-            Ok(())
-        }
-    }
 
     struct MockZoxideClient {
         should_fail: bool,
@@ -174,24 +96,17 @@ mod tests {
 
     #[test]
     fn test_create_worktree_success() {
-        let service = WorktreeService::new(
-            MockGitClient::new(),
-            MockHookExecutor::new(),
-            MockZoxideClient::new(),
-        );
-
-        let branch = "feature";
+        let service = WorktreeService::new(MockGitClient::default(), MockZoxideClient::new());
         let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
-        let hooks = HookActions::default();
 
         let result = service.create_worktree(
-            branch,
+            "feature",
             &worktree_path,
             None,
             &repo_root,
-            &hooks,
-            true, // zoxide enabled
+            true,
+            |_| Ok(()),
         );
 
         assert!(result.is_ok());
@@ -200,24 +115,17 @@ mod tests {
 
     #[test]
     fn test_create_worktree_with_start_point() {
-        let service = WorktreeService::new(
-            MockGitClient::new(),
-            MockHookExecutor::new(),
-            MockZoxideClient::new(),
-        );
-
-        let branch = "feature";
+        let service = WorktreeService::new(MockGitClient::default(), MockZoxideClient::new());
         let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
-        let hooks = HookActions::default();
 
         let result = service.create_worktree(
-            branch,
+            "feature",
             &worktree_path,
             Some("main"),
             &repo_root,
-            &hooks,
-            false, // zoxide disabled
+            false,
+            |_| Ok(()),
         );
 
         assert!(result.is_ok());
@@ -225,68 +133,67 @@ mod tests {
     }
 
     #[test]
-    fn test_create_worktree_git_failure() {
+    fn test_create_worktree_git_failure_skips_callback_and_zoxide() {
         let service = WorktreeService::new(
-            MockGitClient::with_failure(),
-            MockHookExecutor::new(),
-            MockZoxideClient::new(),
+            MockGitClient {
+                create_should_fail: true,
+                ..Default::default()
+            },
+            MockZoxideClient::with_failure(),
         );
-
-        let branch = "feature";
+        let callback_called = Cell::new(false);
         let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
-        let hooks = HookActions::default();
 
         let result =
-            service.create_worktree(branch, &worktree_path, None, &repo_root, &hooks, true);
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Mock git failure"));
-    }
-
-    #[test]
-    fn test_create_worktree_hook_failure() {
-        let service = WorktreeService::new(
-            MockGitClient::new(),
-            MockHookExecutor::with_failure(),
-            MockZoxideClient::new(),
-        );
-
-        let branch = "feature";
-        let worktree_path = PathBuf::from("/test/worktree");
-        let repo_root = PathBuf::from("/test/repo");
-        let hooks = HookActions::default();
-
-        let result =
-            service.create_worktree(branch, &worktree_path, None, &repo_root, &hooks, true);
+            service.create_worktree("feature", &worktree_path, None, &repo_root, true, |_| {
+                callback_called.set(true);
+                Ok(())
+            });
 
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Mock hook failure"));
+            .contains("Mock git create worktree failure"));
+        assert!(
+            !callback_called.get(),
+            "callback must not run when git fails"
+        );
+    }
+
+    #[test]
+    fn test_create_worktree_callback_error_propagates_and_skips_zoxide() {
+        let service = WorktreeService::new(
+            MockGitClient::default(),
+            MockZoxideClient::with_failure(), // would fail if reached
+        );
+        let worktree_path = PathBuf::from("/test/worktree");
+        let repo_root = PathBuf::from("/test/repo");
+
+        let result =
+            service.create_worktree("feature", &worktree_path, None, &repo_root, true, |_| {
+                anyhow::bail!("callback boom")
+            });
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("callback boom"));
     }
 
     #[test]
     fn test_create_worktree_zoxide_failure() {
-        let service = WorktreeService::new(
-            MockGitClient::new(),
-            MockHookExecutor::new(),
-            MockZoxideClient::with_failure(),
-        );
-
-        let branch = "feature";
+        let service =
+            WorktreeService::new(MockGitClient::default(), MockZoxideClient::with_failure());
         let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
-        let hooks = HookActions::default();
 
         let result = service.create_worktree(
-            branch,
+            "feature",
             &worktree_path,
             None,
             &repo_root,
-            &hooks,
             true, // zoxide enabled
+            |_| Ok(()),
         );
 
         assert!(result.is_err());
@@ -297,25 +204,21 @@ mod tests {
     }
 
     #[test]
-    fn test_create_worktree_zoxide_disabled() {
+    fn test_create_worktree_zoxide_disabled_skips_zoxide() {
         let service = WorktreeService::new(
-            MockGitClient::new(),
-            MockHookExecutor::new(),
-            MockZoxideClient::with_failure(), // Will fail if called
+            MockGitClient::default(),
+            MockZoxideClient::with_failure(), // would fail if reached
         );
-
-        let branch = "feature";
         let worktree_path = PathBuf::from("/test/worktree");
         let repo_root = PathBuf::from("/test/repo");
-        let hooks = HookActions::default();
 
         let result = service.create_worktree(
-            branch,
+            "feature",
             &worktree_path,
             None,
             &repo_root,
-            &hooks,
-            false, // zoxide disabled - should not call zoxide
+            false, // zoxide disabled
+            |_| Ok(()),
         );
 
         assert!(result.is_ok());

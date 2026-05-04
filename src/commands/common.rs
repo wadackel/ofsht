@@ -4,9 +4,9 @@
 
 use anyhow::{Context, Result};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 
 use crate::domain::worktree::WorktreeList;
+use crate::integrations::git::{GitClient, RealGitClient};
 
 /// Get the main repository root path
 ///
@@ -16,20 +16,16 @@ use crate::domain::worktree::WorktreeList;
 /// - Git command fails
 /// - Path canonicalization fails
 pub fn get_main_repo_root() -> Result<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--git-common-dir"])
-        .output()
-        .context("Failed to execute git rev-parse")?;
+    let git = RealGitClient;
+    let stdout = git
+        .rev_parse(&["rev-parse", "--git-common-dir"], None)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Not in a git repository. Please run ofsht from within a git repository.\nGit error: {e}"
+            )
+        })?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "Not in a git repository. Please run ofsht from within a git repository.\nGit error: {}",
-            stderr.trim()
-        );
-    }
-
-    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let git_dir = stdout.trim().to_string();
     let git_path = PathBuf::from(&git_dir);
 
     // Convert relative path to absolute
@@ -133,21 +129,11 @@ pub fn resolve_worktree_target(
 
     // Get current path if resolving "."
     let current_path_opt = if is_current_worktree_removal {
-        let current_output = Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .output()
-            .context("Failed to get current worktree path")?;
-
-        if !current_output.status.success() {
-            let stderr = String::from_utf8_lossy(&current_output.stderr);
-            anyhow::bail!("Not in a git repository: {stderr}");
-        }
-
-        Some(
-            String::from_utf8_lossy(&current_output.stdout)
-                .trim()
-                .to_string(),
-        )
+        let git = RealGitClient;
+        let stdout = git
+            .rev_parse(&["rev-parse", "--show-toplevel"], None)
+            .map_err(|e| anyhow::anyhow!("Not in a git repository: {e}"))?;
+        Some(stdout.trim().to_string())
     } else {
         None
     };

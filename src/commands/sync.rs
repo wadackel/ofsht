@@ -3,7 +3,6 @@
 use anyhow::Result;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 use crate::color;
@@ -11,6 +10,7 @@ use crate::commands::common::get_main_repo_root;
 use crate::config::{self, HookActions};
 use crate::domain::worktree::WorktreeList;
 use crate::hooks;
+use crate::integrations::git::{GitClient, RealGitClient};
 
 /// Sync hooks.create actions to all existing non-main worktrees
 ///
@@ -41,18 +41,8 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
         return Ok(());
     }
 
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&repo_root)
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to execute git worktree list: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree list failed: {}", stderr.trim());
-    }
-
-    let list_stdout = String::from_utf8_lossy(&output.stdout);
+    let git = RealGitClient;
+    let list_stdout = git.list_worktrees(Some(&repo_root))?;
     let list = WorktreeList::parse(&list_stdout, None);
     let worktrees = list.non_main();
 

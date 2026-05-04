@@ -1,17 +1,15 @@
 //! List command - Display all worktrees with formatting options
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config::Config;
-use crate::domain::worktree::{
-    format_worktree_table, get_last_commit_time, normalize_absolute_path, WorktreeList,
-};
+use crate::domain::worktree::{format_worktree_table, normalize_absolute_path, WorktreeList};
+use crate::integrations::git::{GitClient, RealGitClient};
 
 /// List all worktrees
 ///
@@ -21,17 +19,8 @@ use crate::domain::worktree::{
 /// - Output parsing fails
 pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
     // Get worktree list in porcelain format
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .context("Failed to execute git worktree list --porcelain")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree list failed: {stderr}");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let git = RealGitClient;
+    let stdout = git.list_worktrees(None)?;
 
     // Get current directory for active worktree detection
     let current_dir = std::env::current_dir().ok();
@@ -53,7 +42,7 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
         // Get commit times for all worktrees
         let commit_times: Vec<Option<DateTime<Utc>>> = entries
             .iter()
-            .map(|entry| get_last_commit_time(&std::path::PathBuf::from(&entry.path)))
+            .map(|entry| git.last_commit_time(&std::path::PathBuf::from(&entry.path)))
             .collect();
 
         // Format and print table to stderr (color_mode controls ANSI emission)
@@ -76,7 +65,7 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
 
             let commit_times: Vec<Option<DateTime<Utc>>> = entries
                 .iter()
-                .map(|entry| get_last_commit_time(&std::path::PathBuf::from(&entry.path)))
+                .map(|entry| git.last_commit_time(&std::path::PathBuf::from(&entry.path)))
                 .collect();
 
             // Format and print table to stdout

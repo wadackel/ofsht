@@ -10,6 +10,7 @@ use crate::config;
 use crate::domain::worktree::{
     calculate_relative_path, calculate_worktree_root_from_paths, WorktreeList,
 };
+use crate::integrations::git::{GitClient, RealGitClient};
 use crate::integrations::tmux::{sanitize_window_name, RealTmuxLauncher, TmuxLauncher};
 
 /// Worktree entry for the open command
@@ -34,18 +35,11 @@ fn resolve_mode(pane: bool, window: bool, config_value: &str) -> &'static str {
 
 /// Get the current worktree path via git rev-parse --show-toplevel
 fn get_current_worktree_path() -> Result<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .context("Failed to get current worktree path")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Not in a git repository: {stderr}");
-    }
-
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(PathBuf::from(path))
+    let git = RealGitClient;
+    let stdout = git
+        .rev_parse(&["rev-parse", "--show-toplevel"], None)
+        .map_err(|e| anyhow::anyhow!("Not in a git repository: {e}"))?;
+    Ok(PathBuf::from(stdout.trim()))
 }
 
 /// Build worktree list with names, skipping the current worktree
@@ -114,18 +108,8 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
     launcher.detect()?;
 
     // Get worktree list
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&repo_root)
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to execute git worktree list: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree list failed: {}", stderr.trim());
-    }
-
-    let list_stdout = String::from_utf8_lossy(&output.stdout);
+    let git = RealGitClient;
+    let list_stdout = git.list_worktrees(Some(&repo_root))?;
     let list = WorktreeList::parse(&list_stdout, None);
     let main_entry = list
         .main()
