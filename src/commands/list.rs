@@ -10,8 +10,7 @@ use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config::Config;
 use crate::domain::worktree::{
-    format_worktree_table, get_last_commit_time, normalize_absolute_path,
-    parse_simple_worktree_entries, parse_worktree_entries,
+    format_worktree_table, get_last_commit_time, normalize_absolute_path, WorktreeList,
 };
 
 /// List all worktrees
@@ -48,7 +47,8 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
 
     if is_interactive {
         // Interactive mode: enhanced table to stderr (with colors if enabled)
-        let entries = parse_worktree_entries(&stdout, current_dir.as_deref());
+        let list = WorktreeList::parse(&stdout, current_dir.as_deref());
+        let entries = list.entries();
 
         // Get commit times for all worktrees
         let commit_times: Vec<Option<DateTime<Utc>>> = entries
@@ -58,7 +58,7 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
 
         // Format and print table to stderr (color_mode controls ANSI emission)
         let lines = format_worktree_table(
-            &entries,
+            entries,
             &commit_times,
             show_path,
             color_mode,
@@ -71,7 +71,8 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
         // Pipe mode: output to stdout (color_mode still controls ANSI emission)
         if show_path {
             // Full table output to stdout
-            let entries = parse_worktree_entries(&stdout, current_dir.as_deref());
+            let list = WorktreeList::parse(&stdout, current_dir.as_deref());
+            let entries = list.entries();
 
             let commit_times: Vec<Option<DateTime<Utc>>> = entries
                 .iter()
@@ -81,7 +82,7 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
             // Format and print table to stdout
             // color_mode determines whether ANSI codes are included
             let lines = format_worktree_table(
-                &entries,
+                entries,
                 &commit_times,
                 show_path,
                 color_mode,
@@ -91,10 +92,10 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
                 println!("{line}");
             }
         } else {
-            // Simple mode: branch names only - use lightweight parsing without hashes
-            let entries = parse_simple_worktree_entries(&stdout);
+            // Simple mode: branch names only — pipe-mode parse without active_path
+            let list = WorktreeList::parse(&stdout, None);
 
-            for (index, entry) in entries.iter().enumerate() {
+            for (index, entry) in list.entries().iter().enumerate() {
                 if index == 0 {
                     // Main worktree
                     println!("@");

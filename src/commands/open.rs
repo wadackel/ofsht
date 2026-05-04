@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::color;
-use crate::commands::common::{
-    canonicalize_allow_missing, get_main_repo_root, parse_all_worktrees,
-};
+use crate::commands::common::{canonicalize_allow_missing, get_main_repo_root};
 use crate::config;
-use crate::domain::worktree::{calculate_relative_path, calculate_worktree_root_from_paths};
+use crate::domain::worktree::{
+    calculate_relative_path, calculate_worktree_root_from_paths, WorktreeList,
+};
 use crate::integrations::tmux::{sanitize_window_name, RealTmuxLauncher, TmuxLauncher};
 
 /// Worktree entry for the open command
@@ -100,34 +100,6 @@ fn build_worktree_list(
     (result, skipped_name)
 }
 
-/// Parse main branch from porcelain output
-fn parse_main_branch(porcelain_output: &str) -> Option<String> {
-    let mut in_first_worktree = false;
-
-    for line in porcelain_output.lines() {
-        if line.starts_with("worktree ") {
-            if in_first_worktree {
-                // We've reached the second worktree without finding a branch
-                return None;
-            }
-            in_first_worktree = true;
-        } else if in_first_worktree {
-            if let Some(branch_ref) = line.strip_prefix("branch ") {
-                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
-                return Some(branch.to_string());
-            }
-            if line == "detached" {
-                return None;
-            }
-            if line.is_empty() {
-                return None;
-            }
-        }
-    }
-
-    None
-}
-
 /// Open all worktrees in tmux
 ///
 /// # Errors
@@ -154,19 +126,24 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
     }
 
     let list_stdout = String::from_utf8_lossy(&output.stdout);
-    let (main_path, worktrees) = parse_all_worktrees(&list_stdout);
-    let main_branch = parse_main_branch(&list_stdout);
+    let list = WorktreeList::parse(&list_stdout, None);
+    let main_entry = list
+        .main()
+        .context("git worktree list returned no entries")?;
+    let main_path = main_entry.path.clone();
+    let main_branch = main_entry.branch.as_deref();
+    let worktrees: Vec<(String, Option<String>)> = list
+        .non_main()
+        .iter()
+        .map(|e| (e.path.clone(), e.branch.clone()))
+        .collect();
 
     // Detect current worktree
     let current_path = get_current_worktree_path()?;
 
     // Build list, skipping current worktree
-    let (open_list, skipped_name) = build_worktree_list(
-        &main_path,
-        main_branch.as_deref(),
-        &worktrees,
-        &current_path,
-    );
+    let (open_list, skipped_name) =
+        build_worktree_list(&main_path, main_branch, &worktrees, &current_path);
 
     if open_list.is_empty() {
         eprintln!("No worktrees to open (all worktrees are already in the current session).");
@@ -316,20 +293,23 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_main_branch_normal() {
+    fn test_main_branch_via_worktree_list_normal() {
         let porcelain = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\n";
-        assert_eq!(parse_main_branch(porcelain), Some("main".to_string()));
+        let list = WorktreeList::parse(porcelain, None);
+        assert_eq!(list.main().and_then(|m| m.branch.as_deref()), Some("main"));
     }
 
     #[test]
-    fn test_parse_main_branch_detached() {
+    fn test_main_branch_via_worktree_list_detached() {
         let porcelain = "worktree /path/to/main\nHEAD abc123\ndetached\n\n";
-        assert_eq!(parse_main_branch(porcelain), None);
+        let list = WorktreeList::parse(porcelain, None);
+        assert_eq!(list.main().and_then(|m| m.branch.as_deref()), None);
     }
 
     #[test]
-    fn test_parse_main_branch_empty() {
-        assert_eq!(parse_main_branch(""), None);
+    fn test_main_branch_via_worktree_list_empty() {
+        let list = WorktreeList::parse("", None);
+        assert!(list.main().is_none());
     }
 
     #[test]

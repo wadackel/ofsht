@@ -7,8 +7,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::color;
-use crate::commands::common::{get_main_repo_root, parse_all_worktrees};
+use crate::commands::common::get_main_repo_root;
 use crate::config::{self, HookActions};
+use crate::domain::worktree::WorktreeList;
 use crate::hooks;
 
 /// Sync hooks.create actions to all existing non-main worktrees
@@ -52,7 +53,8 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
     }
 
     let list_stdout = String::from_utf8_lossy(&output.stdout);
-    let (_main_path, worktrees) = parse_all_worktrees(&list_stdout);
+    let list = WorktreeList::parse(&list_stdout, None);
+    let worktrees = list.non_main();
 
     if worktrees.is_empty() {
         eprintln!("No non-main worktrees found. Nothing to sync.");
@@ -63,8 +65,9 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
     let is_tty = color_mode.should_colorize();
     let mut errors: Vec<String> = vec![];
 
-    for (path, branch) in &worktrees {
-        let label = branch.as_deref().unwrap_or(path.as_str());
+    for entry in worktrees {
+        let path = &entry.path;
+        let label = entry.branch.as_deref().unwrap_or(path.as_str());
 
         // Header spinner (TTY) or pre-printed header (non-TTY)
         let header_pb = if is_tty {

@@ -7,9 +7,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::color;
-use crate::commands::common::{get_main_repo_root, parse_all_worktrees, resolve_worktree_target};
+use crate::commands::common::{get_main_repo_root, resolve_worktree_target};
 use crate::config;
-use crate::domain::worktree::display_path;
+use crate::domain::worktree::{display_path, WorktreeList};
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
@@ -267,7 +267,11 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
         )?;
 
         // Print main worktree path for shell wrapper
-        let (main_path, _) = parse_all_worktrees(&list_stdout);
+        let list = WorktreeList::parse(&list_stdout, None);
+        let main_path = list
+            .main()
+            .map(|m| m.path.as_str())
+            .context("git worktree list returned no entries")?;
         println!("{main_path}");
     }
 

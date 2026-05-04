@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use crate::domain::worktree::WorktreeList;
+
 /// Get the main repository root path
 ///
 /// # Errors
@@ -45,153 +47,6 @@ pub fn get_main_repo_root() -> Result<PathBuf> {
         .unwrap_or(abs_git_path);
 
     Ok(repo_root)
-}
-
-/// Find worktree path by branch name
-/// Returns None if branch not found or is main worktree
-pub fn find_worktree_by_branch(output: &str, branch_name: &str) -> Option<String> {
-    let mut current_path: Option<String> = None;
-    let mut worktree_index = 0;
-
-    for line in output.lines() {
-        if line.starts_with("worktree ") {
-            current_path = line.strip_prefix("worktree ").map(String::from);
-            worktree_index += 1;
-        } else if line.starts_with("branch ") {
-            if let Some(branch_ref) = line.strip_prefix("branch ") {
-                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
-
-                // Skip main worktree (index 1)
-                if worktree_index > 1 && branch == branch_name {
-                    return current_path;
-                }
-            }
-        } else if line.is_empty() {
-            current_path = None;
-        }
-    }
-
-    None
-}
-
-/// Find worktree path by absolute path
-///
-/// Uses canonicalization to match paths even when:
-/// - Input path is relative
-/// - Paths contain symlinks, `.` or `..` components
-///
-/// Returns None if path not found or is main worktree
-pub fn find_worktree_by_path(output: &str, target_path: &Path) -> Option<String> {
-    let mut worktree_index = 0;
-
-    for line in output.lines() {
-        if line.starts_with("worktree ") {
-            let current_path = line.strip_prefix("worktree ").map(String::from);
-            worktree_index += 1;
-
-            // Skip main worktree (index 1)
-            if worktree_index > 1 {
-                if let Some(path) = &current_path {
-                    let path_buf = PathBuf::from(path);
-                    let canonical_target = canonicalize_allow_missing(target_path);
-                    let canonical_worktree = canonicalize_allow_missing(&path_buf);
-
-                    if canonical_target == canonical_worktree {
-                        return current_path;
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Check if the given path or branch name refers to the main worktree
-/// This function is only used in tests
-#[cfg(test)]
-pub fn is_main_worktree(output: &str, path_or_branch: &str) -> bool {
-    // "@" is always main worktree
-    if path_or_branch == "@" {
-        return true;
-    }
-
-    let mut main_path: Option<String> = None;
-    let mut main_branch: Option<String> = None;
-    let mut worktree_index = 0;
-
-    for line in output.lines() {
-        if line.starts_with("worktree ") {
-            worktree_index += 1;
-            if worktree_index == 1 {
-                main_path = line.strip_prefix("worktree ").map(String::from);
-            }
-        } else if line.starts_with("branch ") && worktree_index == 1 {
-            if let Some(branch_ref) = line.strip_prefix("branch ") {
-                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
-                main_branch = Some(branch.to_string());
-            }
-        }
-
-        // Early exit if we have both and are past main worktree
-        if worktree_index > 1 && main_path.is_some() {
-            break;
-        }
-    }
-
-    // Check if matches main path or main branch
-    main_path.as_deref() == Some(path_or_branch) || main_branch.as_deref() == Some(path_or_branch)
-}
-
-/// Parse all worktrees and return (`main_path`, `Vec<(path, Option<branch>)>`)
-/// Returns the main worktree path and a list of all non-main worktrees
-pub fn parse_all_worktrees(output: &str) -> (String, Vec<(String, Option<String>)>) {
-    let mut main_path = String::new();
-    let mut worktrees = Vec::new();
-    let mut worktree_index = 0;
-    let mut current_path: Option<String> = None;
-    let mut current_branch: Option<String> = None;
-
-    for line in output.lines() {
-        if line.starts_with("worktree ") {
-            // Save previous worktree
-            if let Some(path) = current_path.take() {
-                if worktree_index == 1 {
-                    main_path = path;
-                } else {
-                    worktrees.push((path, current_branch.take()));
-                }
-            }
-            worktree_index += 1;
-            current_path = line.strip_prefix("worktree ").map(String::from);
-            current_branch = None;
-        } else if line.starts_with("branch ") {
-            if let Some(branch_ref) = line.strip_prefix("branch ") {
-                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
-                current_branch = Some(branch.to_string());
-            }
-        } else if line.is_empty() {
-            // End of worktree entry
-            if let Some(path) = current_path.take() {
-                if worktree_index == 1 {
-                    main_path = path;
-                } else {
-                    worktrees.push((path, current_branch.take()));
-                }
-            }
-        }
-    }
-
-    // Handle last worktree
-    if let Some(path) = current_path {
-        if worktree_index == 1 {
-            main_path = path;
-        } else {
-            worktrees.push((path, current_branch));
-        }
-    }
-
-    (main_path, worktrees)
 }
 
 /// Canonicalize a path, even if it doesn't exist on the filesystem
@@ -297,8 +152,12 @@ pub fn resolve_worktree_target(
         None
     };
 
-    // Parse all worktrees
-    let (main_path, worktrees) = parse_all_worktrees(list_stdout);
+    // Parse all worktrees once via the unified WorktreeList API.
+    let list = WorktreeList::parse(list_stdout, None);
+    let main_entry = list
+        .main()
+        .context("git worktree list returned no entries")?;
+    let main_path = main_entry.path.clone();
 
     // Check for main worktree
     if name == "@" {
@@ -308,13 +167,6 @@ pub fn resolve_worktree_target(
     let worktree_path: PathBuf;
     let branch_name: Option<String>;
     let canonical_path: PathBuf;
-
-    // Try to find by branch name first (to avoid conflicts with files/dirs of the same name)
-    let branch_match = if !is_current_worktree_removal && name != "@" {
-        find_worktree_by_branch(list_stdout, name)
-    } else {
-        None
-    };
 
     // Special handling for "." (current worktree)
     if let Some(current_path) = current_path_opt {
@@ -327,31 +179,27 @@ pub fn resolve_worktree_target(
             anyhow::bail!("Cannot remove main worktree");
         }
 
-        // Find branch name for current worktree
-        let mut current_branch: Option<String> = None;
-        for (path, branch) in &worktrees {
-            let path_buf = PathBuf::from(path);
-            let canonical_wt = canonicalize_allow_missing(&path_buf);
-            if canonical_wt == canonical_current {
-                current_branch.clone_from(branch);
-                break;
-            }
-        }
+        // Find branch name for current worktree among non-main entries
+        let current_branch = list
+            .non_main()
+            .iter()
+            .find(|e| canonicalize_allow_missing(&PathBuf::from(&e.path)) == canonical_current)
+            .and_then(|e| e.branch.clone());
 
         worktree_path = PathBuf::from(current_path);
         branch_name = current_branch;
         canonical_path = canonical_current;
-    } else if let Some(path) = branch_match {
-        // Found by branch name
-        worktree_path = PathBuf::from(&path);
+    } else if let Some(entry) = list.find_by_branch(name) {
+        // Found by branch name (excludes main automatically)
+        worktree_path = PathBuf::from(&entry.path);
         branch_name = Some(name.to_string());
-        let path_buf = PathBuf::from(&path);
-        canonical_path = canonicalize_allow_missing(&path_buf);
+        canonical_path = canonicalize_allow_missing(&worktree_path);
     } else {
         // Try to resolve as relative path from worktree root
-        let worktree_paths: Vec<PathBuf> = worktrees
+        let worktree_paths: Vec<PathBuf> = list
+            .non_main()
             .iter()
-            .map(|(path, _)| PathBuf::from(path))
+            .map(|e| PathBuf::from(&e.path))
             .collect();
 
         let relative_match = crate::domain::worktree::calculate_worktree_root_from_paths(
@@ -359,18 +207,12 @@ pub fn resolve_worktree_target(
         )
         .and_then(|root| {
             let abs_path = root.join(name);
-            find_worktree_by_path(list_stdout, &abs_path)
+            list.find_by_path(&abs_path).cloned()
         });
 
-        if let Some(ref_path) = relative_match {
-            // Look up branch name (ref_path is verbatim from porcelain output)
-            let matched_branch = worktrees
-                .iter()
-                .find(|(p, _)| p == &ref_path)
-                .and_then(|(_, branch)| branch.clone());
-
-            worktree_path = PathBuf::from(&ref_path);
-            branch_name = matched_branch;
+        if let Some(matched) = relative_match {
+            worktree_path = PathBuf::from(&matched.path);
+            branch_name = matched.branch;
             canonical_path = canonicalize_allow_missing(&worktree_path);
         } else {
             // Fallback: try to resolve as an absolute path
@@ -384,20 +226,9 @@ pub fn resolve_worktree_target(
                 anyhow::bail!("Cannot remove main worktree");
             }
 
-            // Check if it matches any known worktree path
-            let mut found_worktree = None;
-            for (path, branch) in &worktrees {
-                let path_buf = PathBuf::from(path);
-                let canonical_worktree = canonicalize_allow_missing(&path_buf);
-                if canonical_input == canonical_worktree {
-                    found_worktree = Some((path.clone(), branch.clone()));
-                    break;
-                }
-            }
-
-            if let Some((path, branch)) = found_worktree {
-                worktree_path = PathBuf::from(path);
-                branch_name = branch;
+            if let Some(entry) = list.find_by_path(&input_path_buf) {
+                worktree_path = PathBuf::from(&entry.path);
+                branch_name = entry.branch.clone();
                 canonical_path = canonical_input;
             } else {
                 anyhow::bail!("Worktree not found: {name}");
@@ -416,123 +247,6 @@ pub fn resolve_worktree_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_find_worktree_by_branch_finds_path() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-worktree /path/to/bugfix
-branch refs/heads/bugfix
-
-";
-        let result = find_worktree_by_branch(output, "feature");
-        assert_eq!(result, Some("/path/to/feature".to_string()));
-    }
-
-    #[test]
-    fn test_find_worktree_by_branch_not_found() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-";
-        let result = find_worktree_by_branch(output, "nonexistent");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_find_worktree_by_branch_main_not_found() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-";
-        // Main worktree should not be found (it's excluded)
-        let result = find_worktree_by_branch(output, "main");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_find_worktree_by_path_exact_match() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-worktree /path/to/bugfix
-branch refs/heads/bugfix
-
-";
-        let result = find_worktree_by_path(output, &PathBuf::from("/path/to/feature"));
-        assert_eq!(result, Some("/path/to/feature".to_string()));
-    }
-
-    #[test]
-    fn test_find_worktree_by_path_not_found() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-";
-        let result = find_worktree_by_path(output, &PathBuf::from("/path/to/nonexistent"));
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_find_worktree_by_path_main_excluded() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-";
-        // Main worktree should not be found (it's excluded)
-        let result = find_worktree_by_path(output, &PathBuf::from("/path/to/main"));
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_is_main_worktree_by_path() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-";
-        assert!(is_main_worktree(output, "/path/to/main"));
-        assert!(!is_main_worktree(output, "/path/to/feature"));
-        assert!(!is_main_worktree(output, "/nonexistent"));
-    }
-
-    #[test]
-    fn test_is_main_worktree_by_branch() {
-        let output = "worktree /path/to/main
-branch refs/heads/develop
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-";
-        // "@" is always treated as main worktree
-        assert!(is_main_worktree(output, "@"));
-        // Branch name matching main worktree's branch is also considered main
-        assert!(is_main_worktree(output, "develop"));
-        assert!(!is_main_worktree(output, "feature"));
-    }
 
     #[test]
     fn test_canonicalize_allow_missing_existing_path() {

@@ -9,19 +9,12 @@ use std::process::Command;
 use crate::color;
 use crate::commands::common::canonicalize_allow_missing;
 
-/// Simple worktree entry without hash information
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SimpleWorktreeEntry {
-    pub path: String,
-    pub branch: Option<String>,
-}
-
 /// Worktree entry for enhanced display
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeEntry {
     pub path: String,
     pub branch: Option<String>,
-    pub hash: String,
+    pub hash: Option<String>,
     pub is_active: bool,
 }
 
@@ -33,83 +26,6 @@ struct WorktreeDisplay {
     branch: String,
     timestamp: String,
     is_active: bool,
-}
-
-/// Parse worktree list --porcelain output into structured entries
-///
-/// Returns a Vec of all worktrees (including main) with their commit hashes.
-/// Parses the HEAD line from porcelain output to avoid expensive git rev-parse calls.
-pub fn parse_worktree_entries(
-    output: &str,
-    active_path: Option<&std::path::Path>,
-) -> Vec<WorktreeEntry> {
-    let mut entries = Vec::new();
-    let mut current_path: Option<String> = None;
-    let mut current_branch: Option<String> = None;
-    let mut current_hash: Option<String> = None;
-
-    // Try to canonicalize active_path, but keep original if canonicalization fails
-    let canonical_active =
-        active_path.map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
-
-    for line in output.lines() {
-        if line.starts_with("worktree ") {
-            // Save previous worktree
-            if let Some(path) = current_path.take() {
-                let hash = current_hash
-                    .take()
-                    .unwrap_or_else(|| "(unknown)".to_string());
-                let is_active = is_path_active(&path, canonical_active.as_ref());
-                entries.push(WorktreeEntry {
-                    path,
-                    branch: current_branch.take(),
-                    hash,
-                    is_active,
-                });
-            }
-            current_path = line.strip_prefix("worktree ").map(String::from);
-            current_branch = None;
-            current_hash = None;
-        } else if line.starts_with("HEAD ") {
-            // Parse HEAD hash and truncate to 8 characters
-            if let Some(full_hash) = line.strip_prefix("HEAD ") {
-                current_hash = Some(full_hash.chars().take(8).collect());
-            }
-        } else if line.starts_with("branch ") {
-            if let Some(branch_ref) = line.strip_prefix("branch ") {
-                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
-                current_branch = Some(branch.to_string());
-            }
-        } else if line.is_empty() {
-            // End of worktree entry
-            if let Some(path) = current_path.take() {
-                let hash = current_hash
-                    .take()
-                    .unwrap_or_else(|| "(unknown)".to_string());
-                let is_active = is_path_active(&path, canonical_active.as_ref());
-                entries.push(WorktreeEntry {
-                    path,
-                    branch: current_branch.take(),
-                    hash,
-                    is_active,
-                });
-            }
-        }
-    }
-
-    // Handle last worktree
-    if let Some(path) = current_path {
-        let hash = current_hash.unwrap_or_else(|| "(unknown)".to_string());
-        let is_active = is_path_active(&path, canonical_active.as_ref());
-        entries.push(WorktreeEntry {
-            path,
-            branch: current_branch,
-            hash,
-            is_active,
-        });
-    }
-
-    entries
 }
 
 /// Check if a worktree path matches the active path
@@ -125,49 +41,135 @@ fn is_path_active(worktree_path: &str, canonical_active: Option<&std::path::Path
     false
 }
 
-/// Parse worktree entries without expensive hash lookups (for pipe mode)
-/// Returns lightweight entries with only path and branch information
-pub fn parse_simple_worktree_entries(output: &str) -> Vec<SimpleWorktreeEntry> {
-    let mut entries = Vec::new();
-    let mut current_path: Option<String> = None;
-    let mut current_branch: Option<String> = None;
+/// Unified worktree list parsed from `git worktree list --porcelain` output.
+///
+/// Single parser + six query methods (`entries`, `main`, `non_main`,
+/// `find_by_branch`, `find_by_path`, `current`) replacing the previous family
+/// of standalone porcelain scanners scattered across `commands/*` and `cli.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeList {
+    entries: Vec<WorktreeEntry>,
+}
 
-    for line in output.lines() {
-        if line.starts_with("worktree ") {
-            // Save previous worktree
-            if let Some(path) = current_path.take() {
-                entries.push(SimpleWorktreeEntry {
-                    path,
-                    branch: current_branch.take(),
-                });
-            }
-            current_path = line.strip_prefix("worktree ").map(String::from);
-            current_branch = None;
-        } else if line.starts_with("branch ") {
-            if let Some(branch_ref) = line.strip_prefix("branch ") {
+impl WorktreeList {
+    /// Parse `git worktree list --porcelain` output.
+    ///
+    /// `active_path`: when `Some`, the matching entry's `is_active` field is set to `true`
+    /// using canonicalize-then-string-fallback comparison (same semantics as the legacy
+    /// `is_path_active` helper).
+    #[must_use]
+    pub fn parse(porcelain: &str, active_path: Option<&std::path::Path>) -> Self {
+        let mut entries = Vec::new();
+        let mut current_path: Option<String> = None;
+        let mut current_branch: Option<String> = None;
+        let mut current_hash: Option<String> = None;
+
+        let canonical_active =
+            active_path.map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
+
+        for line in porcelain.lines() {
+            if let Some(path) = line.strip_prefix("worktree ") {
+                if let Some(prev_path) = current_path.take() {
+                    let is_active = is_path_active(&prev_path, canonical_active.as_ref());
+                    entries.push(WorktreeEntry {
+                        path: prev_path,
+                        branch: current_branch.take(),
+                        hash: current_hash.take(),
+                        is_active,
+                    });
+                }
+                current_path = Some(path.to_string());
+            } else if let Some(full_hash) = line.strip_prefix("HEAD ") {
+                current_hash = Some(full_hash.chars().take(8).collect());
+            } else if let Some(branch_ref) = line.strip_prefix("branch ") {
                 let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
                 current_branch = Some(branch.to_string());
+            } else if line == "detached" {
+                current_branch = None;
+            } else if line.is_empty() {
+                if let Some(prev_path) = current_path.take() {
+                    let is_active = is_path_active(&prev_path, canonical_active.as_ref());
+                    entries.push(WorktreeEntry {
+                        path: prev_path,
+                        branch: current_branch.take(),
+                        hash: current_hash.take(),
+                        is_active,
+                    });
+                }
             }
-        } else if line.is_empty() {
-            // End of worktree entry
-            if let Some(path) = current_path.take() {
-                entries.push(SimpleWorktreeEntry {
-                    path,
-                    branch: current_branch.take(),
-                });
-            }
+        }
+
+        if let Some(prev_path) = current_path {
+            let is_active = is_path_active(&prev_path, canonical_active.as_ref());
+            entries.push(WorktreeEntry {
+                path: prev_path,
+                branch: current_branch,
+                hash: current_hash,
+                is_active,
+            });
+        }
+
+        Self { entries }
+    }
+
+    /// All worktree entries in the order returned by `git worktree list --porcelain`.
+    /// The main worktree (when present) is always at index 0.
+    #[must_use]
+    pub fn entries(&self) -> &[WorktreeEntry] {
+        &self.entries
+    }
+
+    /// The main worktree (index 0). Returns `None` when porcelain output yields no entries
+    /// (e.g. empty input, broken repo). git itself always emits at least one entry in
+    /// healthy repositories.
+    #[must_use]
+    pub fn main(&self) -> Option<&WorktreeEntry> {
+        self.entries.first()
+    }
+
+    /// All non-main worktree entries (everything after index 0). Empty when no extras exist.
+    #[must_use]
+    pub fn non_main(&self) -> &[WorktreeEntry] {
+        if self.entries.is_empty() {
+            &[]
+        } else {
+            &self.entries[1..]
         }
     }
 
-    // Handle last worktree
-    if let Some(path) = current_path {
-        entries.push(SimpleWorktreeEntry {
-            path,
-            branch: current_branch,
-        });
+    /// Find a non-main worktree by branch name (refs/heads/ already stripped).
+    /// Returns the first match. The main worktree is excluded so `find_by_branch("main")`
+    /// returns `None` when "main" is the main worktree's branch.
+    #[must_use]
+    pub fn find_by_branch(&self, branch_name: &str) -> Option<&WorktreeEntry> {
+        self.non_main()
+            .iter()
+            .find(|e| e.branch.as_deref() == Some(branch_name))
     }
 
-    entries
+    /// Find a non-main worktree by absolute or relative path.
+    /// Uses `canonicalize_allow_missing` for both sides so non-existent paths still compare
+    /// by their lexical normalization. The main worktree is excluded.
+    #[must_use]
+    pub fn find_by_path(&self, target: &std::path::Path) -> Option<&WorktreeEntry> {
+        let canonical_target = canonicalize_allow_missing(target);
+        self.non_main().iter().find(|e| {
+            let path_buf = std::path::PathBuf::from(&e.path);
+            canonicalize_allow_missing(&path_buf) == canonical_target
+        })
+    }
+
+    /// The currently-active worktree (matched against the `active_path` passed to `parse`).
+    /// Returns `None` when no `active_path` was provided, or when no entry matched.
+    ///
+    /// Production callers currently access `WorktreeEntry.is_active` directly via
+    /// `format_worktree_table`. This helper is part of the documented `WorktreeList`
+    /// API surface and is exercised by unit tests.
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn current(&self) -> Option<&WorktreeEntry> {
+        self.entries.iter().find(|e| e.is_active)
+    }
 }
 
 /// Get the last commit time for a worktree
@@ -476,7 +478,10 @@ pub fn format_worktree_table(
         } else {
             None
         };
-        let hash = entry.hash.clone();
+        let hash = entry
+            .hash
+            .clone()
+            .unwrap_or_else(|| "(unknown)".to_string());
 
         // Calculate relative path for non-main worktrees
         let rel_path = if index != 0 {
@@ -883,117 +888,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_worktree_entries_single_worktree() {
-        let output = "worktree /path/to/main
-HEAD 1234567890abcdef1234567890abcdef
-branch refs/heads/main
-
-";
-        let result = parse_worktree_entries(output, None);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, "/path/to/main");
-        assert_eq!(result[0].branch, Some("main".to_string()));
-        // Hash should be first 8 chars of HEAD
-        assert_eq!(result[0].hash, "12345678");
-    }
-
-    #[test]
-    fn test_parse_worktree_entries_multiple_worktrees() {
-        let output = "worktree /path/to/main
-HEAD 1234567890abcdef1234567890abcdef
-branch refs/heads/main
-
-worktree /path/to/feature
-HEAD abcdef1234567890abcdef1234567890
-branch refs/heads/feature
-
-worktree /path/to/bugfix
-HEAD fedcba0987654321fedcba0987654321
-branch refs/heads/bugfix
-
-";
-        let result = parse_worktree_entries(output, None);
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0].path, "/path/to/main");
-        assert_eq!(result[0].branch, Some("main".to_string()));
-        assert_eq!(result[0].hash, "12345678");
-
-        assert_eq!(result[1].path, "/path/to/feature");
-        assert_eq!(result[1].branch, Some("feature".to_string()));
-        assert_eq!(result[1].hash, "abcdef12");
-
-        assert_eq!(result[2].path, "/path/to/bugfix");
-        assert_eq!(result[2].branch, Some("bugfix".to_string()));
-        assert_eq!(result[2].hash, "fedcba09");
-    }
-
-    #[test]
-    fn test_parse_worktree_entries_detached_head() {
-        let output = "worktree /path/to/main
-HEAD 1234567890abcdef1234567890abcdef
-detached
-
-worktree /path/to/feature
-HEAD abcdef1234567890abcdef1234567890
-branch refs/heads/feature
-
-";
-        let result = parse_worktree_entries(output, None);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].path, "/path/to/main");
-        assert_eq!(result[0].branch, None);
-        assert_eq!(result[0].hash, "12345678");
-
-        assert_eq!(result[1].path, "/path/to/feature");
-        assert_eq!(result[1].branch, Some("feature".to_string()));
-        assert_eq!(result[1].hash, "abcdef12");
-    }
-
-    #[test]
-    fn test_parse_worktree_entries_empty() {
-        let output = "";
-        let result = parse_worktree_entries(output, None);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_parse_worktree_entries_with_active_path() {
-        let output = "worktree /path/to/main
-HEAD 1234567890abcdef1234567890abcdef
-branch refs/heads/main
-
-worktree /path/to/feature
-HEAD abcdef1234567890abcdef1234567890
-branch refs/heads/feature
-
-";
-        let active_path = std::path::PathBuf::from("/path/to/feature");
-        let result = parse_worktree_entries(output, Some(&active_path));
-
-        assert_eq!(result.len(), 2);
-        assert!(!result[0].is_active);
-        assert!(result[1].is_active);
-    }
-
-    #[test]
-    fn test_parse_worktree_entries_without_active_path() {
-        let output = "worktree /path/to/main
-HEAD 1234567890abcdef1234567890abcdef
-branch refs/heads/main
-
-worktree /path/to/feature
-HEAD abcdef1234567890abcdef1234567890
-branch refs/heads/feature
-
-";
-        let result = parse_worktree_entries(output, None);
-
-        assert_eq!(result.len(), 2);
-        assert!(!result[0].is_active);
-        assert!(!result[1].is_active);
-    }
-
-    #[test]
     fn test_get_last_commit_time_current_repo() {
         // Test with current repository (should have commits)
         let current_dir = std::env::current_dir().unwrap();
@@ -1015,7 +909,7 @@ branch refs/heads/feature
         let entries = vec![WorktreeEntry {
             path: "/path/to/main".to_string(),
             branch: Some("main".to_string()),
-            hash: "a1b2c3d4".to_string(),
+            hash: Some("a1b2c3d4".to_string()),
             is_active: false,
         }];
         let commit_times = vec![Some(
@@ -1042,7 +936,7 @@ branch refs/heads/feature
         let entries = vec![WorktreeEntry {
             path: "/path/to/main".to_string(),
             branch: Some("main".to_string()),
-            hash: "a1b2c3d4".to_string(),
+            hash: Some("a1b2c3d4".to_string()),
             is_active: false,
         }];
         let commit_times = vec![Some(
@@ -1070,13 +964,13 @@ branch refs/heads/feature
             WorktreeEntry {
                 path: "/path/to/main".to_string(),
                 branch: Some("main".to_string()),
-                hash: "a1b2c3d4".to_string(),
+                hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
             },
             WorktreeEntry {
                 path: "/path/to/feature-branch".to_string(),
                 branch: Some("feature".to_string()),
-                hash: "e5f6g7h8".to_string(),
+                hash: Some("e5f6g7h8".to_string()),
                 is_active: false,
             },
         ];
@@ -1110,13 +1004,13 @@ branch refs/heads/feature
             WorktreeEntry {
                 path: "/short".to_string(),
                 branch: Some("a".to_string()),
-                hash: "12345678".to_string(),
+                hash: Some("12345678".to_string()),
                 is_active: false,
             },
             WorktreeEntry {
                 path: "/very/long/path/to/worktree".to_string(),
                 branch: Some("feature-branch".to_string()),
-                hash: "abcdefgh".to_string(),
+                hash: Some("abcdefgh".to_string()),
                 is_active: false,
             },
         ];
@@ -1150,7 +1044,7 @@ branch refs/heads/feature
         let entries = vec![WorktreeEntry {
             path: "/path/to/detached".to_string(),
             branch: None,
-            hash: "deadbeef".to_string(),
+            hash: Some("deadbeef".to_string()),
             is_active: false,
         }];
         let commit_times = vec![None];
@@ -1175,13 +1069,13 @@ branch refs/heads/feature
             WorktreeEntry {
                 path: "/path/to/main".to_string(),
                 branch: Some("main".to_string()),
-                hash: "a1b2c3d4".to_string(),
+                hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
             },
             WorktreeEntry {
                 path: "/path/to/feature".to_string(),
                 branch: Some("feature".to_string()),
-                hash: "e5f6g7h8".to_string(),
+                hash: Some("e5f6g7h8".to_string()),
                 is_active: true,
             },
         ];
@@ -1208,13 +1102,13 @@ branch refs/heads/feature
             WorktreeEntry {
                 path: "/path/to/main".to_string(),
                 branch: Some("main".to_string()),
-                hash: "a1b2c3d4".to_string(),
+                hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
             },
             WorktreeEntry {
                 path: "/path/to/feature".to_string(),
                 branch: Some("feature".to_string()),
-                hash: "e5f6g7h8".to_string(),
+                hash: Some("e5f6g7h8".to_string()),
                 is_active: true,
             },
         ];
@@ -1242,19 +1136,19 @@ branch refs/heads/feature
             WorktreeEntry {
                 path: "/Users/test/repo-worktrees/main".to_string(),
                 branch: Some("main".to_string()),
-                hash: "a1b2c3d4".to_string(),
+                hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
             },
             WorktreeEntry {
                 path: "/Users/test/repo-worktrees/feature".to_string(),
                 branch: Some("feature".to_string()),
-                hash: "e5f6g7h8".to_string(),
+                hash: Some("e5f6g7h8".to_string()),
                 is_active: false,
             },
             WorktreeEntry {
                 path: "/Users/test/repo-worktrees/docs/tweak".to_string(),
                 branch: Some("docs/tweak".to_string()),
-                hash: "i9j0k1l2".to_string(),
+                hash: Some("i9j0k1l2".to_string()),
                 is_active: true,
             },
         ];
@@ -1300,73 +1194,253 @@ branch refs/heads/feature
         assert!(nested_line.starts_with("* ")); // Active marker
     }
 
-    // Tests for parse_simple_worktree_entries
-    #[test]
-    fn test_parse_simple_worktree_entries_single() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
+    // -----------------------------------------------------------------
+    // WorktreeList tests (Step 2: porcelain parser unification)
+    // -----------------------------------------------------------------
 
-";
-        let result = parse_simple_worktree_entries(output);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, "/path/to/main");
-        assert_eq!(result[0].branch, Some("main".to_string()));
+    #[test]
+    fn test_worktree_list_parse_basic() {
+        let output = "worktree /path/to/main\nHEAD abc123def456789\nbranch refs/heads/main\n\nworktree /path/to/feat\nHEAD def456abc789012\nbranch refs/heads/feat\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.entries()[0].path, "/path/to/main");
+        assert_eq!(list.entries()[0].branch.as_deref(), Some("main"));
+        assert_eq!(list.entries()[1].path, "/path/to/feat");
+        assert_eq!(list.entries()[1].branch.as_deref(), Some("feat"));
     }
 
     #[test]
-    fn test_parse_simple_worktree_entries_multiple() {
-        let output = "worktree /path/to/main
-branch refs/heads/main
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-worktree /path/to/bugfix
-branch refs/heads/bugfix
-
-";
-        let result = parse_simple_worktree_entries(output);
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0].path, "/path/to/main");
-        assert_eq!(result[0].branch, Some("main".to_string()));
-        assert_eq!(result[1].path, "/path/to/feature");
-        assert_eq!(result[1].branch, Some("feature".to_string()));
-        assert_eq!(result[2].path, "/path/to/bugfix");
-        assert_eq!(result[2].branch, Some("bugfix".to_string()));
+    fn test_worktree_list_parse_detached_head_implicit() {
+        // Detached HEAD with no `branch` line and no explicit `detached` marker
+        let output = "worktree /path/to/main\nHEAD abc123def456789\nbranch refs/heads/main\n\nworktree /path/to/det\nHEAD aaaaaaaaaaaaaaaa\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.entries()[1].branch, None);
     }
 
     #[test]
-    fn test_parse_simple_worktree_entries_detached() {
-        let output = "worktree /path/to/main
-detached
-
-worktree /path/to/feature
-branch refs/heads/feature
-
-";
-        let result = parse_simple_worktree_entries(output);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].path, "/path/to/main");
-        assert_eq!(result[0].branch, None);
-        assert_eq!(result[1].path, "/path/to/feature");
-        assert_eq!(result[1].branch, Some("feature".to_string()));
+    fn test_worktree_list_parse_detached_head_explicit_marker() {
+        // Detached HEAD with explicit `detached` line (fzf.rs legacy behavior)
+        let output = "worktree /path/to/main\nHEAD abc123def456789\nbranch refs/heads/main\n\nworktree /path/to/det\nHEAD aaaaaaaaaaaaaaaa\ndetached\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.entries()[1].branch, None);
     }
 
     #[test]
-    fn test_parse_simple_worktree_entries_empty() {
-        let output = "";
-        let result = parse_simple_worktree_entries(output);
-        assert!(result.is_empty());
+    fn test_worktree_list_parse_main_marker_at_index_0() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries()[0].path, "/repo");
+        assert_eq!(list.entries()[0].branch.as_deref(), Some("main"));
     }
 
     #[test]
-    fn test_parse_simple_worktree_entries_no_blank_lines() {
-        // Test without trailing blank lines
-        let output = "worktree /path/to/main
-branch refs/heads/main";
-        let result = parse_simple_worktree_entries(output);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, "/path/to/main");
-        assert_eq!(result[0].branch, Some("main".to_string()));
+    fn test_worktree_list_parse_branch_with_slash() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-feat\nHEAD def67890xxxxxx\nbranch refs/heads/feature/foo\n\nworktree /wt-rel\nHEAD eee99999xxxxxx\nbranch refs/heads/release/1.0\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 3);
+        assert_eq!(list.entries()[1].branch.as_deref(), Some("feature/foo"));
+        assert_eq!(list.entries()[2].branch.as_deref(), Some("release/1.0"));
+    }
+
+    #[test]
+    fn test_worktree_list_parse_branch_with_at_sign() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-v2\nHEAD def67890xxxxxx\nbranch refs/heads/feature@v2\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.entries()[1].branch.as_deref(), Some("feature@v2"));
+    }
+
+    #[test]
+    fn test_worktree_list_parse_trailing_newline_missing() {
+        // Missing trailing blank line — last entry must still be captured
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.entries()[1].path, "/wt-a");
+        assert_eq!(list.entries()[1].branch.as_deref(), Some("feature-a"));
+    }
+
+    #[test]
+    fn test_worktree_list_parse_main_only_trailing_newline_missing() {
+        // Single main entry without trailing newline; main() must not return None
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main";
+        let list = WorktreeList::parse(output, None);
+        assert!(list.main().is_some());
+        assert_eq!(list.main().unwrap().path, "/repo");
+        assert_eq!(list.main().unwrap().branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn test_worktree_list_parse_single_entry() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 1);
+        assert!(list.non_main().is_empty());
+    }
+
+    #[test]
+    fn test_worktree_list_parse_empty_input() {
+        let list = WorktreeList::parse("", None);
+        assert!(list.entries().is_empty());
+        assert!(list.main().is_none());
+        assert!(list.non_main().is_empty());
+    }
+
+    #[test]
+    fn test_worktree_list_parse_no_trim_required_on_canonical_git_output() {
+        // Canonical git porcelain output has no leading/trailing whitespace per line
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt\nHEAD def67890xxxxxx\nbranch refs/heads/feat\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.entries()[0].path, "/repo");
+        assert_eq!(list.entries()[1].path, "/wt");
+        assert_eq!(list.entries()[1].branch.as_deref(), Some("feat"));
+    }
+
+    #[test]
+    fn test_worktree_list_parse_malformed_branch_before_worktree_panic_free() {
+        // Malformed input where `branch` line appears before any `worktree` line
+        // Must not panic; behavior is best-effort (the orphan branch is dropped)
+        let output = "branch refs/heads/orphan\nworktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].path, "/repo");
+        assert_eq!(list.entries()[0].branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn test_worktree_list_main_returns_first_entry_when_present() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt\nHEAD def67890xxxxxx\nbranch refs/heads/feat\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert!(list.main().is_some());
+        assert_eq!(list.main().unwrap().path, "/repo");
+    }
+
+    #[test]
+    fn test_worktree_list_main_returns_none_on_empty_list() {
+        let list = WorktreeList::parse("", None);
+        assert!(list.main().is_none());
+    }
+
+    #[test]
+    fn test_worktree_list_non_main_excludes_first() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\nworktree /wt-b\nHEAD eee99999xxxxxx\nbranch refs/heads/feature-b\n\n";
+        let list = WorktreeList::parse(output, None);
+        let non_main = list.non_main();
+        assert_eq!(non_main.len(), 2);
+        assert_eq!(non_main[0].path, "/wt-a");
+        assert_eq!(non_main[1].path, "/wt-b");
+    }
+
+    #[test]
+    fn test_worktree_list_find_by_branch_hits() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
+        let list = WorktreeList::parse(output, None);
+        let entry = list.find_by_branch("feature-a");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().path, "/wt-a");
+    }
+
+    #[test]
+    fn test_worktree_list_find_by_branch_misses() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert!(list.find_by_branch("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_worktree_list_find_by_branch_main_excluded() {
+        // find_by_branch must not return the main worktree even if branch matches
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert!(list.find_by_branch("main").is_none());
+    }
+
+    #[test]
+    fn test_worktree_list_find_by_branch_first_match_wins_on_duplicate() {
+        // Abnormal input: same branch on two non-main worktrees — first wins
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-first\nHEAD def67890xxxxxx\nbranch refs/heads/dup\n\nworktree /wt-second\nHEAD eee99999xxxxxx\nbranch refs/heads/dup\n\n";
+        let list = WorktreeList::parse(output, None);
+        let entry = list.find_by_branch("dup");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().path, "/wt-first");
+    }
+
+    #[test]
+    fn test_worktree_list_find_by_path_canonicalize_match() {
+        // Use /tmp which always exists for canonicalize success path
+        let tmp_canonical = std::fs::canonicalize("/tmp").unwrap();
+        let tmp_str = tmp_canonical.to_string_lossy();
+        let output = format!(
+            "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree {tmp_str}\nHEAD def67890xxxxxx\nbranch refs/heads/feat\n\n"
+        );
+        let list = WorktreeList::parse(&output, None);
+        let entry = list.find_by_path(std::path::Path::new("/tmp"));
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().path, tmp_str.as_ref());
+    }
+
+    #[test]
+    fn test_worktree_list_find_by_path_string_fallback() {
+        // Non-existent path — string comparison fallback path
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /nonexistent/path/wt\nHEAD def67890xxxxxx\nbranch refs/heads/feat\n\n";
+        let list = WorktreeList::parse(output, None);
+        let entry = list.find_by_path(std::path::Path::new("/nonexistent/path/wt"));
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().path, "/nonexistent/path/wt");
+    }
+
+    #[test]
+    fn test_worktree_list_find_by_path_main_excluded() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert!(list.find_by_path(std::path::Path::new("/repo")).is_none());
+    }
+
+    #[test]
+    fn test_worktree_list_current_with_active_path_canonicalize() {
+        let tmp_canonical = std::fs::canonicalize("/tmp").unwrap();
+        let tmp_str = tmp_canonical.to_string_lossy();
+        let output = format!(
+            "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree {tmp_str}\nHEAD def67890xxxxxx\nbranch refs/heads/feat\n\n"
+        );
+        let list = WorktreeList::parse(&output, Some(std::path::Path::new("/tmp")));
+        let cur = list.current();
+        assert!(cur.is_some());
+        assert_eq!(cur.unwrap().path, tmp_str.as_ref());
+    }
+
+    #[test]
+    fn test_worktree_list_current_with_active_path_string_fallback() {
+        // Non-existent active path — string comparison fallback
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /nonexistent/wt\nHEAD def67890xxxxxx\nbranch refs/heads/feat\n\n";
+        let list = WorktreeList::parse(output, Some(std::path::Path::new("/nonexistent/wt")));
+        let cur = list.current();
+        assert!(cur.is_some());
+        assert_eq!(cur.unwrap().path, "/nonexistent/wt");
+    }
+
+    #[test]
+    fn test_worktree_list_current_no_active_returns_none() {
+        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert!(list.current().is_none());
+    }
+
+    #[test]
+    fn test_worktree_list_hash_truncated_to_8_chars() {
+        let output = "worktree /repo\nHEAD abc12345def67890\nbranch refs/heads/main\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries()[0].hash.as_deref(), Some("abc12345"));
+    }
+
+    #[test]
+    fn test_worktree_list_hash_none_when_head_line_missing() {
+        // No HEAD line — hash should be None (pipe-mode behavior)
+        let output = "worktree /repo\nbranch refs/heads/main\n\n";
+        let list = WorktreeList::parse(output, None);
+        assert_eq!(list.entries()[0].hash, None);
     }
 }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::domain::worktree::{
-    calculate_relative_path, calculate_worktree_root_from_paths, display_path,
+    calculate_relative_path, calculate_worktree_root_from_paths, display_path, WorktreeList,
 };
 
 /// Item to display in fzf
@@ -132,12 +132,6 @@ pub fn is_fzf_available() -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// Intermediate parsed worktree entry for fzf display
-struct ParsedWorktree {
-    path: String,
-    branch: Option<String>,
-}
-
 /// Build worktree items from git worktree list --porcelain output
 ///
 /// Display format: `{name} · {branch} · {path}`
@@ -145,50 +139,21 @@ struct ParsedWorktree {
 /// - Non-main worktrees show their relative path from the worktree root
 /// - Columns are padded for alignment (except the last column)
 pub fn build_worktree_items(porcelain_output: &str) -> Vec<FzfItem> {
-    // Pass 1: Parse porcelain output into intermediate entries
-    let mut entries = Vec::new();
-    let mut current_path: Option<String> = None;
-    let mut current_branch: Option<String> = None;
-
-    for line in porcelain_output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            if let Some(path) = current_path.take() {
-                entries.push(ParsedWorktree {
-                    path,
-                    branch: current_branch.take(),
-                });
-            }
-            continue;
-        }
-
-        if let Some(path) = line.strip_prefix("worktree ") {
-            current_path = Some(path.to_string());
-        } else if let Some(branch_ref) = line.strip_prefix("branch ") {
-            if let Some(branch_name) = branch_ref.strip_prefix("refs/heads/") {
-                current_branch = Some(branch_name.to_string());
-            }
-        } else if line == "detached" {
-            current_branch = None;
-        }
-    }
-
-    // Handle last entry if output doesn't end with empty line
-    if let Some(path) = current_path {
-        entries.push(ParsedWorktree {
-            path,
-            branch: current_branch,
-        });
-    }
+    // Parse via the unified WorktreeList type (replaces the previous Pass 1
+    // independent scanner). Real `git worktree list --porcelain` output never
+    // has leading/trailing whitespace, so the legacy `.trim()` defense is
+    // dropped — covered by `test_build_worktree_items_no_trim_behavior_equivalent`.
+    let list = WorktreeList::parse(porcelain_output, None);
+    let entries = list.entries();
 
     if entries.is_empty() {
         return Vec::new();
     }
 
     // Calculate worktree root from non-main paths
-    let non_main_paths: Vec<PathBuf> = entries
+    let non_main_paths: Vec<PathBuf> = list
+        .non_main()
         .iter()
-        .skip(1)
         .map(|e| PathBuf::from(&e.path))
         .collect();
     let worktree_root = calculate_worktree_root_from_paths(&non_main_paths);
@@ -485,5 +450,31 @@ branch refs/heads/feature-branch
                 item.display
             );
         }
+    }
+
+    #[test]
+    fn test_build_worktree_items_no_trim_behavior_equivalent() {
+        // Canonical git worktree list --porcelain output: no leading/trailing whitespace.
+        // After WorktreeList unification the legacy `.trim()` defense was dropped.
+        // This test pins display equivalence on canonical input so any future regression
+        // in the unified parser surfaces here.
+        let porcelain = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /worktrees/feature\nHEAD def456\nbranch refs/heads/feature\n\n";
+        let items = build_worktree_items(porcelain);
+        assert_eq!(items.len(), 2);
+        // Main entry — name `@`, branch `[@]`
+        assert!(items[0].display.starts_with('@'), "main name marker");
+        assert!(
+            items[0].display.contains("[@]"),
+            "main branch marker [@] present: {}",
+            items[0].display
+        );
+        // Non-main entry — branch `[feature]`
+        assert!(
+            items[1].display.contains("[feature]"),
+            "feature branch marker present: {}",
+            items[1].display
+        );
+        assert_eq!(items[0].value, "/path/to/main");
+        assert_eq!(items[1].value, "/worktrees/feature");
     }
 }

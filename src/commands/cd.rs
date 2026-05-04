@@ -4,9 +4,9 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::commands::common::{find_worktree_by_path, get_main_repo_root, parse_all_worktrees};
+use crate::commands::common::get_main_repo_root;
 use crate::config;
-use crate::domain::worktree::normalize_absolute_path;
+use crate::domain::worktree::{normalize_absolute_path, WorktreeList};
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
 
@@ -70,10 +70,17 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
     };
     let name = name.as_str();
 
+    // Parse the porcelain output once and reuse the WorktreeList for all 3
+    // resolution passes (`@`, branch name, relative path, absolute path).
+    let list = WorktreeList::parse(&stdout, None);
+
     // Special handling for "@" (main worktree)
     if name == "@" {
-        let (main_path, _) = parse_all_worktrees(&stdout);
-        println!("{}", normalize_absolute_path(&PathBuf::from(&main_path)));
+        let main_path = list
+            .main()
+            .map(|m| m.path.as_str())
+            .context("git worktree list returned no entries")?;
+        println!("{}", normalize_absolute_path(&PathBuf::from(main_path)));
         return Ok(());
     }
 
@@ -82,54 +89,25 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
     let config = config::Config::load_from_repo_root(&repo_root).ok();
 
     // Priority 1: Try to find by branch name
-    let mut current_path: Option<&str> = None;
-    let mut found_path: Option<String> = None;
-
-    for line in stdout.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            current_path = Some(path);
-        } else if let Some(branch_line) = line.strip_prefix("branch ") {
-            let branch = branch_line
-                .strip_prefix("refs/heads/")
-                .unwrap_or(branch_line);
-
-            // Check if this is the branch we're looking for
-            if branch == name {
-                if let Some(path) = current_path {
-                    found_path = Some(path.to_string());
-                    break;
-                }
-            }
-        } else if line.is_empty() {
-            current_path = None;
-        }
-    }
-
-    if let Some(path) = found_path {
-        println!("{}", normalize_absolute_path(&PathBuf::from(&path)));
+    if let Some(entry) = list.find_by_branch(name) {
+        println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
         return Ok(());
     }
 
     // Priority 2: Try to resolve as relative path (if config is available)
     if config.is_some() {
-        // Parse worktrees to get all non-main worktree paths
-        let (_main_path, worktrees) = parse_all_worktrees(&stdout);
-
-        // Collect all non-main worktree paths
-        let worktree_paths: Vec<PathBuf> = worktrees
+        let worktree_paths: Vec<PathBuf> = list
+            .non_main()
             .iter()
-            .map(|(path, _)| PathBuf::from(path))
+            .map(|e| PathBuf::from(&e.path))
             .collect();
 
         if let Some(worktree_root) =
             crate::domain::worktree::calculate_worktree_root_from_paths(&worktree_paths)
         {
-            // Convert relative path to absolute path
             let abs_path = worktree_root.join(name);
-
-            // Try to find worktree by this absolute path
-            if let Some(path) = find_worktree_by_path(&stdout, &abs_path) {
-                println!("{}", normalize_absolute_path(&PathBuf::from(&path)));
+            if let Some(entry) = list.find_by_path(&abs_path) {
+                println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
                 return Ok(());
             }
         }
@@ -137,8 +115,8 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
 
     // Priority 3: Try to resolve as absolute path (fallback)
     let input_path = PathBuf::from(name);
-    if let Some(path) = find_worktree_by_path(&stdout, &input_path) {
-        println!("{}", normalize_absolute_path(&PathBuf::from(&path)));
+    if let Some(entry) = list.find_by_path(&input_path) {
+        println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
         return Ok(());
     }
 
