@@ -62,6 +62,3 @@ fn main() -> Result<()> {
         Commands::Sync { run, copy, link } => commands::sync::cmd_sync(run, copy, link, color_mode),
     }
 }
-
-// Re-export get_main_repo_root for backwards compatibility
-pub use commands::common::get_main_repo_root;
