@@ -79,29 +79,6 @@ cargo install ofsht
 brew install wadackel/tap/ofsht
 ```
 
-### Using mise
-
-If you're using [mise](https://mise.jdx.dev/) for development tool management:
-
-```bash
-# Install latest version
-mise use -g ubi:wadackel/ofsht
-
-# Or install specific version
-mise install ubi:wadackel/ofsht@0.1.7
-
-# Or add to mise.toml
-[tools]
-"ubi:wadackel/ofsht" = "latest"
-```
-
-This method works via mise's ubi backend, which automatically:
-- Detects your platform and downloads the appropriate binary
-- Manages versions alongside your other development tools
-- Works without requiring ofsht to be in the mise registry
-
-**Supported platforms**: Linux (x86_64), macOS (Intel/Apple Silicon)
-
 ### From Binary Releases
 
 Download pre-built binaries from the [releases page](https://github.com/wadackel/ofsht/releases).
@@ -122,14 +99,17 @@ sudo mv ofsht /usr/local/bin/
 
 ### From Source
 
-Requires [Rust](https://www.rust-lang.org/tools/install) 1.70+:
+For a reproducible development environment, use the repository's [Nix](https://nixos.org/) flake:
 
 ```bash
 git clone https://github.com/wadackel/ofsht.git
 cd ofsht
+nix develop
 cargo build --release
 sudo mv target/release/ofsht /usr/local/bin/
 ```
+
+If you manage the toolchain yourself, install [Rust](https://www.rust-lang.org/tools/install) and run the same `cargo build --release` command from the checkout.
 
 ## Quick Start
 

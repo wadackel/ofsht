@@ -10,30 +10,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
+All canonical checks run inside the Nix dev shell. Plain `cargo` commands work for quick local iteration, but reproduce CI failures with `nix develop --command ...`.
+
 ### Essential Commands
 ```bash
 # Run all quality checks before committing (required)
-just check
+nix develop --command just check
 
 # Build the project
-cargo build
+nix develop --command cargo build
 # or for release
-cargo build --release
+nix develop --command cargo build --release
 
 # Run all tests
-cargo test
+nix develop --command cargo test
 # or CI-equivalent
-just test-ci
+nix develop --command just test-ci
 
 # Run specific test module
-cargo test config::tests
-cargo test zoxide::tests
+nix develop --command cargo test config::tests
+nix develop --command cargo test zoxide::tests
 
 # Check formatting
-just fmt-ci
+nix develop --command just fmt-ci
 
 # Run clippy with strict warnings
-just clippy-ci
+nix develop --command just clippy-ci
 ```
 
 ### Testing the CLI
