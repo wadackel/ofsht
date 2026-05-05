@@ -302,9 +302,9 @@ pub fn cmd_new(
     // Create tmux window or pane if enabled
     if use_tmux {
         let launcher = integrations::tmux::RealTmuxLauncher;
-        let result = match ctx.config.integrations.tmux.create.as_str() {
-            "pane" => launcher.create_pane(&worktree_path),
-            _ => launcher.create_window(&worktree_path, branch),
+        let result = match ctx.config.integrations.tmux.create {
+            config::OpenMode::Pane => launcher.create_pane(&worktree_path),
+            config::OpenMode::Window => launcher.create_window(&worktree_path, branch),
         };
         if let Err(e) = result {
             eprintln!("Warning: tmux creation failed: {e}");

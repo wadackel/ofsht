@@ -1,6 +1,7 @@
 //! Configuration schema and type definitions
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Configuration for ofsht
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -124,37 +125,38 @@ pub enum TmuxBehavior {
     Never,
 }
 
+/// What kind of tmux entity to create / open: a new window or a split pane.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenMode {
+    /// Create a new tmux window.
+    #[default]
+    Window,
+    /// Split the current window into a pane.
+    Pane,
+}
+
+impl fmt::Display for OpenMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Window => f.write_str("window"),
+            Self::Pane => f.write_str("pane"),
+        }
+    }
+}
+
 /// tmux integration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TmuxConfig {
     /// Automatic tmux integration behavior
     #[serde(default)]
     pub behavior: TmuxBehavior,
     /// What to create when adding a worktree with --tmux
-    /// Values: "window" or "pane"
-    #[serde(default = "default_tmux_create")]
-    pub create: String,
-    /// Default mode for `ofsht open`: "pane" or "window"
-    #[serde(default = "default_tmux_open")]
-    pub open: String,
-}
-
-impl Default for TmuxConfig {
-    fn default() -> Self {
-        Self {
-            behavior: TmuxBehavior::default(),
-            create: default_tmux_create(),
-            open: default_tmux_open(),
-        }
-    }
-}
-
-fn default_tmux_create() -> String {
-    "window".to_string()
-}
-
-fn default_tmux_open() -> String {
-    "window".to_string()
+    #[serde(default)]
+    pub create: OpenMode,
+    /// Default mode for `ofsht open`
+    #[serde(default)]
+    pub open: OpenMode,
 }
 
 /// GitHub CLI integration configuration
