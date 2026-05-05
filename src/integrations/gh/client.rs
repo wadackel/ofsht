@@ -10,8 +10,6 @@ use std::process::Command;
 pub struct IssueInfo {
     pub number: u32,
     pub title: String,
-    #[allow(dead_code)]
-    pub url: String,
 }
 
 /// Information about a GitHub pull request
@@ -20,8 +18,6 @@ pub struct IssueInfo {
 pub struct PrInfo {
     pub number: u32,
     pub title: String,
-    #[allow(dead_code)]
-    pub url: String,
     pub head_ref_name: String,
     /// Whether this PR is from a fork (cross-repository)
     pub is_cross_repository: bool,
@@ -50,7 +46,7 @@ impl GhClient for RealGhClient {
                 "view",
                 &number.to_string(),
                 "--json",
-                "number,title,url",
+                "number,title",
             ])
             .output()
             .context("Failed to execute gh command")?;
@@ -72,7 +68,7 @@ impl GhClient for RealGhClient {
                 "view",
                 &number.to_string(),
                 "--json",
-                "number,title,url,headRefName,isCrossRepository",
+                "number,title,headRefName,isCrossRepository",
             ])
             .output()
             .context("Failed to execute gh command")?;
@@ -185,7 +181,6 @@ pub mod tests {
         let client = MockGhClient::new().with_issue(IssueInfo {
             number: 123,
             title: "Test issue".to_string(),
-            url: "https://github.com/owner/repo/issues/123".to_string(),
         });
 
         let info = client.issue_info(123).unwrap();
@@ -198,7 +193,6 @@ pub mod tests {
         let client = MockGhClient::new().with_pr(PrInfo {
             number: 456,
             title: "Test PR".to_string(),
-            url: "https://github.com/owner/repo/pull/456".to_string(),
             head_ref_name: "feature-branch".to_string(),
             is_cross_repository: false,
         });

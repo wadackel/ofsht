@@ -1,6 +1,6 @@
 //! Configuration schema and type definitions
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::fmt;
 
 /// Effective runtime configuration for ofsht.
@@ -8,7 +8,7 @@ use std::fmt;
 /// Composed by `build_effective_config` from a `ProjectConfig` (local
 /// `.ofsht.toml`) and a `UserConfig` (global `~/.config/ofsht/config.toml`).
 /// Consumers receive this type via `Config::load_from_repo_root`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub hooks: Hooks,
@@ -49,7 +49,7 @@ pub struct UserConfig {
 }
 
 /// Hook configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Hooks {
     #[serde(default)]
     pub create: HookActions,
@@ -58,7 +58,7 @@ pub struct Hooks {
 }
 
 /// Actions to perform in a hook
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct HookActions {
     /// Commands to run
     #[serde(default)]
@@ -73,7 +73,7 @@ pub struct HookActions {
 }
 
 /// Worktree settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct WorktreeConfig {
     /// Directory template for worktree creation
     /// Variables: {repo}, {branch}
@@ -92,7 +92,7 @@ fn default_dir() -> String {
 }
 
 /// Integration configurations
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct IntegrationsConfig {
     #[serde(default)]
     pub zoxide: ZoxideConfig,
@@ -105,7 +105,7 @@ pub struct IntegrationsConfig {
 }
 
 /// zoxide integration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ZoxideConfig {
     /// Enable zoxide integration
     #[serde(default = "default_zoxide_enabled")]
@@ -123,7 +123,7 @@ const fn default_zoxide_enabled() -> bool {
 }
 
 /// fzf integration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct FzfConfig {
     /// Enable fzf integration
     #[serde(default = "default_fzf_enabled")]
@@ -147,7 +147,7 @@ const fn default_fzf_enabled() -> bool {
 }
 
 /// tmux integration behavior
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TmuxBehavior {
     /// Flag-based (default): only use tmux when --tmux is specified
@@ -160,7 +160,7 @@ pub enum TmuxBehavior {
 }
 
 /// What kind of tmux entity to create / open: a new window or a split pane.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenMode {
     /// Create a new tmux window.
@@ -180,7 +180,7 @@ impl fmt::Display for OpenMode {
 }
 
 /// tmux integration configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct TmuxConfig {
     /// Automatic tmux integration behavior
     #[serde(default)]
@@ -194,7 +194,7 @@ pub struct TmuxConfig {
 }
 
 /// GitHub CLI integration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct GhConfig {
     /// Enable GitHub CLI integration
     #[serde(default = "default_gh_enabled")]

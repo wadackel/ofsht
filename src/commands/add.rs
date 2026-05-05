@@ -370,7 +370,6 @@ mod tests {
             .with_issue(integrations::gh::IssueInfo {
                 number: 33,
                 title: "Test issue".to_string(),
-                url: "https://github.com/owner/repo/issues/33".to_string(),
             });
 
         let result = resolve_github_ref(
@@ -394,7 +393,6 @@ mod tests {
             .with_issue(integrations::gh::IssueInfo {
                 number: 33,
                 title: "Test issue".to_string(),
-                url: "https://github.com/owner/repo/issues/33".to_string(),
             });
 
         let result = resolve_github_ref(

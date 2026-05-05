@@ -146,12 +146,7 @@ impl WorktreeList {
 
     /// The currently-active worktree (matched against the `active_path` passed to `parse`).
     /// Returns `None` when no `active_path` was provided, or when no entry matched.
-    ///
-    /// Production callers currently access `WorktreeEntry.is_active` directly via
-    /// `format_worktree_table`. This helper is part of the documented `WorktreeList`
-    /// API surface and is exercised by unit tests.
     #[must_use]
-    #[allow(dead_code)]
     pub fn current(&self) -> Option<&WorktreeEntry> {
         self.entries.iter().find(|e| e.is_active)
     }

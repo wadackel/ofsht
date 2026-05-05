@@ -165,7 +165,7 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
     let mut seen_paths = HashSet::new();
 
     for target in &targets {
-        match resolve_worktree_target(target, &list_stdout, &ctx.repo_root) {
+        match resolve_worktree_target(target, &list_stdout) {
             Ok((canonical_path, worktree_path, branch_name, is_current)) => {
                 // Special handling for current worktree (.)
                 if is_current {

@@ -17,6 +17,37 @@ pub use schema::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use tempfile::TempDir;
+
+    /// RAII helper: save and restore `XDG_CONFIG_HOME` around env mutations
+    /// so tests cannot leak state to one another even when they panic.
+    struct XdgGuard {
+        original: Option<OsString>,
+    }
+
+    impl XdgGuard {
+        fn set(value: &std::path::Path) -> Self {
+            let original = std::env::var_os("XDG_CONFIG_HOME");
+            std::env::set_var("XDG_CONFIG_HOME", value);
+            Self { original }
+        }
+
+        fn unset() -> Self {
+            let original = std::env::var_os("XDG_CONFIG_HOME");
+            std::env::remove_var("XDG_CONFIG_HOME");
+            Self { original }
+        }
+    }
+
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn test_default_config() {
@@ -339,8 +370,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_global_config_path_default() {
-        // Clear XDG_CONFIG_HOME to test default behavior
-        std::env::remove_var("XDG_CONFIG_HOME");
+        let _xdg = XdgGuard::unset();
         if let Some(path) = Config::global_config_path() {
             assert!(path.ends_with(".config/ofsht/config.toml"));
         }
@@ -349,30 +379,23 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_global_config_path_with_xdg_env() {
-        // Set XDG_CONFIG_HOME to an absolute path
-        let xdg_path = std::env::temp_dir().join("xdg_config");
-        std::env::set_var("XDG_CONFIG_HOME", &xdg_path);
+        let xdg_dir = TempDir::new().expect("tempdir");
+        let _xdg = XdgGuard::set(xdg_dir.path());
 
         let path = Config::global_config_path();
-        assert_eq!(path, Some(xdg_path.join("ofsht/config.toml")));
-
-        // Clean up
-        std::env::remove_var("XDG_CONFIG_HOME");
+        assert_eq!(path, Some(xdg_dir.path().join("ofsht/config.toml")));
     }
 
     #[test]
     #[serial_test::serial]
     fn test_global_config_path_relative_xdg_ignored() {
-        // Set XDG_CONFIG_HOME to a relative path (should be ignored)
-        std::env::set_var("XDG_CONFIG_HOME", "relative/path");
+        // A relative XDG_CONFIG_HOME must be ignored; we cannot use TempDir
+        // here because the value itself must be relative.
+        let _xdg = XdgGuard::set(std::path::Path::new("relative/path"));
 
         if let Some(path) = Config::global_config_path() {
-            // Should fall back to default (~/.config/ofsht/config.toml)
             assert!(path.ends_with(".config/ofsht/config.toml"));
         }
-
-        // Clean up
-        std::env::remove_var("XDG_CONFIG_HOME");
     }
 
     #[test]
@@ -487,35 +510,26 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_local_config_without_global_uses_defaults() {
-        // Temporarily override XDG_CONFIG_HOME to a non-existent path
-        let fake_xdg = std::env::temp_dir().join("fake_xdg_no_global");
-        std::env::set_var("XDG_CONFIG_HOME", &fake_xdg);
+        // Point XDG_CONFIG_HOME at an empty tempdir so the global file is
+        // absent and integrations fall back to defaults.
+        let xdg_dir = TempDir::new().expect("tempdir xdg");
+        let _xdg = XdgGuard::set(xdg_dir.path());
 
-        let temp_dir = std::env::temp_dir().join("ofsht_test_no_global");
-        std::fs::create_dir_all(&temp_dir).ok();
-
-        let local_config_path = temp_dir.join(".ofsht.toml");
+        let repo_dir = TempDir::new().expect("tempdir repo");
         std::fs::write(
-            &local_config_path,
+            repo_dir.path().join(".ofsht.toml"),
             r#"
                 [worktree]
                 dir = "/no-global/{branch}"
             "#,
         )
-        .ok();
+        .expect("write local config");
 
-        let config = Config::load_from_repo_root(&temp_dir).unwrap();
+        let config = Config::load_from_repo_root(repo_dir.path()).unwrap();
 
-        // Local worktree settings
         assert_eq!(config.worktree.dir, "/no-global/{branch}");
-
-        // Integration settings should use defaults (no global config)
         assert!(config.integrations.zoxide.enabled);
         assert!(config.integrations.fzf.enabled);
-
-        // Clean up
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     // ---- build_effective_config composition matrix ----
@@ -524,9 +538,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_compose_project_and_user_uses_user_integrations() {
-        let xdg = std::env::temp_dir().join("ofsht_test_compose_both_xdg");
-        let global_dir = xdg.join("ofsht");
-        std::fs::create_dir_all(&global_dir).ok();
+        let xdg_dir = TempDir::new().expect("tempdir xdg");
+        let global_dir = xdg_dir.path().join("ofsht");
+        std::fs::create_dir_all(&global_dir).expect("global dir");
         std::fs::write(
             global_dir.join("config.toml"),
             r#"
@@ -540,13 +554,12 @@ mod tests {
                 enabled = false
             "#,
         )
-        .ok();
-        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        .expect("write global config");
+        let _xdg = XdgGuard::set(xdg_dir.path());
 
-        let repo_root = std::env::temp_dir().join("ofsht_test_compose_both_repo");
-        std::fs::create_dir_all(&repo_root).ok();
+        let repo_dir = TempDir::new().expect("tempdir repo");
         std::fs::write(
-            repo_root.join(".ofsht.toml"),
+            repo_dir.path().join(".ofsht.toml"),
             r#"
                 [worktree]
                 dir = "/local/{branch}"
@@ -555,35 +568,26 @@ mod tests {
                 run = ["echo project"]
             "#,
         )
-        .ok();
+        .expect("write local config");
 
-        let config = Config::load_from_repo_root(&repo_root).expect("compose must succeed");
+        let config = Config::load_from_repo_root(repo_dir.path()).expect("compose must succeed");
 
-        // project's hooks + worktree
         assert_eq!(config.worktree.dir, "/local/{branch}");
         assert_eq!(config.hooks.create.run, vec!["echo project"]);
-        // user's integrations override defaults
         assert!(!config.integrations.zoxide.enabled);
         assert!(!config.integrations.fzf.enabled);
-
-        // Clean up
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::fs::remove_dir_all(&xdg).ok();
-        std::fs::remove_dir_all(&repo_root).ok();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_compose_project_only_uses_default_integrations() {
-        // Point XDG at an empty dir so the global file is absent.
-        let xdg = std::env::temp_dir().join("ofsht_test_compose_project_only_xdg");
-        std::fs::create_dir_all(&xdg).ok();
-        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        // Point XDG at an empty tempdir so the global file is absent.
+        let xdg_dir = TempDir::new().expect("tempdir xdg");
+        let _xdg = XdgGuard::set(xdg_dir.path());
 
-        let repo_root = std::env::temp_dir().join("ofsht_test_compose_project_only_repo");
-        std::fs::create_dir_all(&repo_root).ok();
+        let repo_dir = TempDir::new().expect("tempdir repo");
         std::fs::write(
-            repo_root.join(".ofsht.toml"),
+            repo_dir.path().join(".ofsht.toml"),
             r#"
                 [worktree]
                 dir = "/project-only/{branch}"
@@ -592,31 +596,24 @@ mod tests {
                 run = ["echo bye"]
             "#,
         )
-        .ok();
+        .expect("write local config");
 
-        let config = Config::load_from_repo_root(&repo_root).expect("compose must succeed");
+        let config = Config::load_from_repo_root(repo_dir.path()).expect("compose must succeed");
 
-        // project's hooks + worktree
         assert_eq!(config.worktree.dir, "/project-only/{branch}");
         assert_eq!(config.hooks.delete.run, vec!["echo bye"]);
-        // integrations fall back to default (zoxide/fzf/gh enabled, tmux Auto)
         assert!(config.integrations.zoxide.enabled);
         assert!(config.integrations.fzf.enabled);
         assert!(config.integrations.gh.enabled);
         assert_eq!(config.integrations.tmux.behavior, TmuxBehavior::Auto);
-
-        // Clean up
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::fs::remove_dir_all(&xdg).ok();
-        std::fs::remove_dir_all(&repo_root).ok();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_compose_user_only_uses_full_user_config() {
-        let xdg = std::env::temp_dir().join("ofsht_test_compose_user_only_xdg");
-        let global_dir = xdg.join("ofsht");
-        std::fs::create_dir_all(&global_dir).ok();
+        let xdg_dir = TempDir::new().expect("tempdir xdg");
+        let global_dir = xdg_dir.path().join("ofsht");
+        std::fs::create_dir_all(&global_dir).expect("global dir");
         std::fs::write(
             global_dir.join("config.toml"),
             r#"
@@ -631,25 +628,18 @@ mod tests {
                 create = "pane"
             "#,
         )
-        .ok();
-        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        .expect("write global config");
+        let _xdg = XdgGuard::set(xdg_dir.path());
 
         // Empty repo root — no .ofsht.toml.
-        let repo_root = std::env::temp_dir().join("ofsht_test_compose_user_only_repo");
-        std::fs::create_dir_all(&repo_root).ok();
+        let repo_dir = TempDir::new().expect("tempdir repo");
 
-        let config = Config::load_from_repo_root(&repo_root).expect("compose must succeed");
+        let config = Config::load_from_repo_root(repo_dir.path()).expect("compose must succeed");
 
-        // All fields come from user config
         assert_eq!(config.worktree.dir, "/user-only/{branch}");
         assert_eq!(config.hooks.create.run, vec!["echo user"]);
         assert_eq!(config.integrations.tmux.behavior, TmuxBehavior::Always);
         assert_eq!(config.integrations.tmux.create, OpenMode::Pane);
-
-        // Clean up
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::fs::remove_dir_all(&xdg).ok();
-        std::fs::remove_dir_all(&repo_root).ok();
     }
 
     #[test]
@@ -657,19 +647,17 @@ mod tests {
     fn test_global_config_parse_error_propagates() {
         // Plant a malformed global config and verify the error surfaces
         // instead of being swallowed by the previous `.ok()` fallback.
-        let xdg = std::env::temp_dir().join("ofsht_test_global_parse_error_xdg");
-        let global_dir = xdg.join("ofsht");
-        std::fs::create_dir_all(&global_dir).ok();
+        let xdg_dir = TempDir::new().expect("tempdir xdg");
+        let global_dir = xdg_dir.path().join("ofsht");
+        std::fs::create_dir_all(&global_dir).expect("global dir");
         let global_path = global_dir.join("config.toml");
-        std::fs::write(&global_path, "this is not = valid toml [[").ok();
-        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        std::fs::write(&global_path, "this is not = valid toml [[").expect("plant bad config");
+        let _xdg = XdgGuard::set(xdg_dir.path());
 
-        // Use a non-existent local path so the loader falls through to the
-        // global file, which is malformed.
-        let repo_root = std::env::temp_dir().join("ofsht_test_global_parse_error_repo");
-        std::fs::create_dir_all(&repo_root).ok();
+        // Empty repo root so the loader falls through to the global file.
+        let repo_dir = TempDir::new().expect("tempdir repo");
 
-        let result = Config::load_from_repo_root(&repo_root);
+        let result = Config::load_from_repo_root(repo_dir.path());
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(
@@ -680,11 +668,6 @@ mod tests {
             msg.contains(global_path.to_string_lossy().as_ref()),
             "expected global path in error, got: {msg}"
         );
-
-        // Clean up
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::fs::remove_dir_all(&xdg).ok();
-        std::fs::remove_dir_all(&repo_root).ok();
     }
 
     #[test]
