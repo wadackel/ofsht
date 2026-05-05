@@ -20,6 +20,7 @@ A command-line tool for managing Git worktrees with automation features.
 
 - [Features](#features)
 - [Installation](#installation)
+- [AgentSkill for AI Agents](#agentskill-for-ai-agents)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
   - [Basic Operations](#basic-operations)
@@ -110,6 +111,29 @@ sudo mv target/release/ofsht /usr/local/bin/
 ```
 
 If you manage the toolchain yourself, install [Rust](https://www.rust-lang.org/tools/install) and run the same `cargo build --release` command from the checkout.
+
+## AgentSkill for AI Agents
+
+`ofsht` provides an AgentSkill for AI coding agents that need to manage worktrees through this CLI. Install it with the GitHub CLI `gh skill` preview command:
+
+```bash
+gh skill install wadackel/ofsht ofsht --agent codex --scope project
+```
+
+Preview the skill before installing:
+
+```bash
+gh skill preview wadackel/ofsht ofsht
+```
+
+Update an installed skill:
+
+```bash
+gh skill update ofsht
+```
+
+> [!NOTE]
+> `gh skill` is a preview GitHub CLI feature and may change. The AgentSkill teaches agents how to use the existing `ofsht` CLI safely; it does not install the `ofsht` binary itself.
 
 ## Quick Start
 
@@ -729,6 +753,7 @@ Simply start using `ofsht add` for new worktrees to take advantage of hooks and 
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - Development guide and architecture details
 - [CHANGELOG.md](./CHANGELOG.md) - Version history
 - [TEST.md](./docs/TEST.md) - Manual testing procedures
+- [skills/ofsht/SKILL.md](./skills/ofsht/SKILL.md) - AgentSkill for AI coding agents
 
 ## License
 
