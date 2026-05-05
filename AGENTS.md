@@ -1,8 +1,8 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Note**: For general development information, setup instructions, and contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md). This file contains Claude Code-specific guidance and detailed architecture information.
+> **Note**: For general development information, setup instructions, and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md). This file contains Claude Code-specific guidance and detailed architecture information.
 
 ## Project Overview
 
@@ -81,7 +81,7 @@ When adding a new subcommand, update ALL of the following:
 - `README.md`: ToC, Features section, new Usage section, Common Workflows
 - `CONTRIBUTING.md`: Module Structure tree, Command Modules list
 - `docs/TEST.md`: New verification section, Summary checklist
-- `.claude/CLAUDE.md`: Testing the CLI examples, Module Structure, Command Modules
+- `AGENTS.md`: Testing the CLI examples, Module Structure, Command Modules
 
 ## Code Architecture
 
