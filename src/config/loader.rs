@@ -6,25 +6,6 @@ use std::path::{Path, PathBuf};
 use super::schema::{Config, IntegrationsConfig, ProjectConfig, UserConfig};
 
 impl Config {
-    /// Load configuration with fallback (from current working directory)
-    ///
-    /// This function is provided for backward compatibility and cases where
-    /// you're not in a git repository. For git repository operations, prefer
-    /// `load_from_repo_root()` to ensure consistent behavior across worktrees.
-    ///
-    /// Load priority:
-    /// 1. Local config (.ofsht.toml in current directory) — parsed as `ProjectConfig`
-    /// 2. Global config (~/.config/ofsht/config.toml) — parsed as `UserConfig`
-    /// 3. Default config
-    ///
-    /// # Errors
-    /// Returns an error if a configuration file exists but cannot be read or
-    /// parsed (including unknown-field violations from `deny_unknown_fields`).
-    #[allow(dead_code)]
-    pub fn load() -> Result<Self> {
-        Self::load_impl(None)
-    }
-
     /// Load configuration with fallback (from specified repository root)
     ///
     /// This is the recommended way to load config for git operations. It ensures
