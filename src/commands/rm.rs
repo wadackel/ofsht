@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::color;
-use crate::commands::common::{get_main_repo_root, resolve_worktree_target};
+use crate::commands::common::resolve_worktree_target;
+use crate::commands::context::CommandContext;
 use crate::config;
 use crate::domain::worktree::WorktreeList;
 use crate::hooks;
@@ -17,7 +18,9 @@ use crate::path_utils::display_path;
 
 /// Remove a worktree and optionally delete its branch
 /// This is a shared helper function used by both `cmd_rm_many` and `cmd_finish`
+#[allow(clippy::too_many_arguments)]
 fn remove_worktree_internal(
+    git: &RealGitClient,
     worktree_path: &std::path::Path,
     branch_name: Option<&str>,
     label: &str,
@@ -62,7 +65,6 @@ fn remove_worktree_internal(
     }
 
     // Remove worktree using git worktree remove
-    let git = RealGitClient;
     if let Err(e) = git.remove_worktree(worktree_path, Some(repo_root)) {
         // Clear header spinner on error
         if let Some(pb) = header_pb {
@@ -107,21 +109,17 @@ fn remove_worktree_internal(
 /// - Worktree removal fails
 #[allow(clippy::too_many_lines)]
 pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<()> {
-    // Get main repository root first to avoid issues when current directory is removed
-    let repo_root = get_main_repo_root()?;
-
-    // Load configuration from repo root
-    let config = config::Config::load_from_repo_root(&repo_root)?;
+    // Resolve repo_root, config, and git client once for the whole removal flow.
+    let ctx = CommandContext::new_strict(color_mode)?;
 
     // Get worktree list once for all targets
-    let git = RealGitClient;
-    let list_stdout = git.list_worktrees(Some(&repo_root))?;
+    let list_stdout = ctx.worktree_list_stdout()?;
 
     // Resolve targets: CLI args > stdin (when piped) > fzf
     let targets: Vec<String> = if targets.is_empty() {
         let stdin_targets = crate::stdin::try_read_stdin_lines()?;
         if stdin_targets.is_empty() {
-            if !config.integrations.fzf.enabled {
+            if !ctx.config.integrations.fzf.enabled {
                 anyhow::bail!("Provide at least one target or enable fzf in config");
             }
 
@@ -138,7 +136,7 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
 
             // Use fzf to select (multi-select enabled)
             let picker =
-                integrations::fzf::RealFzfPicker::new(config.integrations.fzf.options.clone());
+                integrations::fzf::RealFzfPicker::new(ctx.config.integrations.fzf.options.clone());
             let selected = picker.pick(&items, true)?;
 
             if selected.is_empty() {
@@ -167,7 +165,7 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
     let mut seen_paths = HashSet::new();
 
     for target in &targets {
-        match resolve_worktree_target(target, &list_stdout, &repo_root) {
+        match resolve_worktree_target(target, &list_stdout, &ctx.repo_root) {
             Ok((canonical_path, worktree_path, branch_name, is_current)) => {
                 // Special handling for current worktree (.)
                 if is_current {
@@ -220,11 +218,12 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
         let path_label = display_path(worktree_path);
         let label = branch_name.as_deref().unwrap_or(&path_label);
         remove_worktree_internal(
+            &ctx.git,
             worktree_path,
             branch_name.as_deref(),
             label,
-            &config,
-            &repo_root,
+            &ctx.config,
+            &ctx.repo_root,
             color_mode,
             &mp,
         )?;
@@ -235,11 +234,12 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
         let path_label = display_path(worktree_path);
         let label = branch_name.as_deref().unwrap_or(&path_label);
         remove_worktree_internal(
+            &ctx.git,
             worktree_path,
             branch_name.as_deref(),
             label,
-            &config,
-            &repo_root,
+            &ctx.config,
+            &ctx.repo_root,
             color_mode,
             &mp,
         )?;

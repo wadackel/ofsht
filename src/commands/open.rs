@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::color;
-use crate::commands::common::get_main_repo_root;
-use crate::config;
+use crate::commands::context::CommandContext;
 use crate::domain::worktree::{
     calculate_relative_path, calculate_worktree_root_from_paths, WorktreeList,
 };
@@ -35,8 +34,7 @@ fn resolve_mode(pane: bool, window: bool, config_value: &str) -> &'static str {
 }
 
 /// Get the current worktree path via git rev-parse --show-toplevel
-fn get_current_worktree_path() -> Result<PathBuf> {
-    let git = RealGitClient;
+fn get_current_worktree_path(git: &RealGitClient) -> Result<PathBuf> {
     let stdout = git
         .rev_parse(&["rev-parse", "--show-toplevel"], None)
         .map_err(|e| anyhow::anyhow!("Not in a git repository: {e}"))?;
@@ -101,16 +99,14 @@ fn build_worktree_list(
 /// Returns an error if not in a git repository, not in a tmux session,
 /// config loading fails, or tmux operations fail.
 pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Result<()> {
-    let repo_root = get_main_repo_root()?;
-    let cfg = config::Config::load_from_repo_root(&repo_root)?;
+    let ctx = CommandContext::new_strict(color_mode)?;
 
     // Detect tmux — hard error if not available
     let launcher = RealTmuxLauncher;
     launcher.detect()?;
 
     // Get worktree list
-    let git = RealGitClient;
-    let list_stdout = git.list_worktrees(Some(&repo_root))?;
+    let list_stdout = ctx.worktree_list_stdout()?;
     let list = WorktreeList::parse(&list_stdout, None);
     let main_entry = list
         .main()
@@ -124,7 +120,7 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
         .collect();
 
     // Detect current worktree
-    let current_path = get_current_worktree_path()?;
+    let current_path = get_current_worktree_path(&ctx.git)?;
 
     // Build list, skipping current worktree
     let (open_list, skipped_name) =
@@ -135,7 +131,7 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
         return Ok(());
     }
 
-    let mode = resolve_mode(pane, window, &cfg.integrations.tmux.open);
+    let mode = resolve_mode(pane, window, &ctx.config.integrations.tmux.open);
 
     match mode {
         "pane" => open_as_panes(&open_list, color_mode)?,

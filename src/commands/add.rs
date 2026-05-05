@@ -5,7 +5,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
 use crate::color;
-use crate::commands::common::get_main_repo_root;
+use crate::commands::context::CommandContext;
 use crate::config;
 use crate::hooks;
 use crate::integrations;
@@ -17,6 +17,7 @@ use crate::service::{CreateWorktreeRequest, WorktreeService};
 
 /// Process a PR and return branch name and start point
 fn process_pr(
+    git: &RealGitClient,
     pr: &integrations::gh::PrInfo,
     number: u32,
     repo_root: &std::path::Path,
@@ -25,7 +26,6 @@ fn process_pr(
     // Check if it's from a fork (cross-repository PR)
     let is_fork = pr.is_cross_repository;
 
-    let git = RealGitClient;
     if is_fork {
         // Fork PR - fetch PR ref from GitHub without checking out
         git.fetch(
@@ -98,6 +98,7 @@ fn process_pr(
 /// Resolve branch name and start point from GitHub issue/PR
 #[allow(clippy::type_complexity)]
 fn resolve_github_ref(
+    git: &RealGitClient,
     gh_client: &impl integrations::gh::GhClient,
     number: u32,
     start_point: Option<&str>,
@@ -114,7 +115,7 @@ fn resolve_github_ref(
 
     // Try PR first, then issue if PR fails
     match gh_client.pr_info(number) {
-        Ok(pr) => process_pr(&pr, number, repo_root, color_mode),
+        Ok(pr) => process_pr(git, &pr, number, repo_root, color_mode),
         Err(_pr_err) => match gh_client.issue_info(number) {
             Ok(issue) => {
                 let branch_name = integrations::gh::build_issue_branch(number);
@@ -178,20 +179,23 @@ pub fn cmd_new(
     };
     let branch = branch_owned.as_str();
 
-    // Get main repository root
-    let repo_root = get_main_repo_root()?;
-
-    // Load configuration from repo root
-    let config = config::Config::load_from_repo_root(&repo_root)?;
+    let ctx = CommandContext::new_strict(color_mode)?;
 
     // Parse branch input to detect GitHub issue/PR references
     let branch_input = integrations::gh::BranchInput::parse(branch);
 
     // Resolve actual branch name and optional start point from GitHub if needed
     let (actual_branch, actual_start_point) = match branch_input {
-        integrations::gh::BranchInput::Github(number) if config.integrations.gh.enabled => {
+        integrations::gh::BranchInput::Github(number) if ctx.config.integrations.gh.enabled => {
             let gh_client = integrations::gh::RealGhClient;
-            resolve_github_ref(&gh_client, number, start_point, &repo_root, color_mode)?
+            resolve_github_ref(
+                &ctx.git,
+                &gh_client,
+                number,
+                start_point,
+                &ctx.repo_root,
+                color_mode,
+            )?
         }
         integrations::gh::BranchInput::Github(number) => {
             // GitHub integration is disabled
@@ -214,7 +218,7 @@ pub fn cmd_new(
     let start_point = actual_start_point.as_deref();
 
     // Determine if tmux should be used based on flags and config
-    let use_tmux = should_use_tmux(config.integrations.tmux.behavior, tmux, no_tmux);
+    let use_tmux = should_use_tmux(ctx.config.integrations.tmux.behavior, tmux, no_tmux);
 
     // Early detection if tmux integration is requested
     if use_tmux {
@@ -241,15 +245,15 @@ pub fn cmd_new(
     };
 
     // Resolve zoxide gating before handing control to the service.
-    let zoxide_enabled = config.integrations.zoxide.enabled && is_zoxide_available();
+    let zoxide_enabled = ctx.config.integrations.zoxide.enabled && is_zoxide_available();
 
     let service = WorktreeService::new(RealGitClient, RealZoxideClient);
-    let hook_actions = &config.hooks.create;
+    let hook_actions = &ctx.config.hooks.create;
     let req = CreateWorktreeRequest {
         branch,
         start_point,
-        repo_root: &repo_root,
-        path_template: &config.worktree.dir,
+        repo_root: &ctx.repo_root,
+        path_template: &ctx.config.worktree.dir,
         zoxide_enabled,
     };
 
@@ -266,7 +270,7 @@ pub fn cmd_new(
             hooks::execute_hooks_lenient_with_mp(
                 hook_actions,
                 path,
-                &repo_root,
+                &ctx.repo_root,
                 color_mode,
                 "  ",
                 &mp,
@@ -298,7 +302,7 @@ pub fn cmd_new(
     // Create tmux window or pane if enabled
     if use_tmux {
         let launcher = integrations::tmux::RealTmuxLauncher;
-        let result = match config.integrations.tmux.create.as_str() {
+        let result = match ctx.config.integrations.tmux.create.as_str() {
             "pane" => launcher.create_pane(&worktree_path),
             _ => launcher.create_window(&worktree_path, branch),
         };
@@ -370,6 +374,7 @@ mod tests {
             });
 
         let result = resolve_github_ref(
+            &RealGitClient,
             &mock,
             33,
             None,
@@ -393,6 +398,7 @@ mod tests {
             });
 
         let result = resolve_github_ref(
+            &RealGitClient,
             &mock,
             33,
             Some("develop"),
@@ -412,6 +418,7 @@ mod tests {
             .with_issue_error("no issue");
 
         let result = resolve_github_ref(
+            &RealGitClient,
             &mock,
             999,
             None,

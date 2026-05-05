@@ -3,12 +3,10 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use crate::commands::common::get_main_repo_root;
-use crate::config;
+use crate::commands::context::CommandContext;
 use crate::domain::worktree::WorktreeList;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
-use crate::integrations::git::{GitClient, RealGitClient};
 use crate::path_utils::normalize_absolute_path;
 
 /// Navigate to a worktree by branch name
@@ -18,10 +16,9 @@ use crate::path_utils::normalize_absolute_path;
 /// - Git worktree list command fails
 /// - Worktree not found
 /// - Fzf is required but not available
-pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Result<()> {
-    // Get worktree list
-    let git = RealGitClient;
-    let stdout = git.list_worktrees(None)?;
+pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Result<()> {
+    let ctx = CommandContext::new_lenient(color_mode)?;
+    let stdout = ctx.worktree_list_stdout()?;
 
     // Resolve name: CLI arg > stdin (when piped) > fzf
     let resolved_name: Option<String> = match name {
@@ -30,10 +27,7 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
     };
 
     let Some(name) = resolved_name else {
-        let repo_root = get_main_repo_root()?;
-        let config = config::Config::load_from_repo_root(&repo_root)?;
-
-        if !config.integrations.fzf.enabled {
+        if !ctx.config.integrations.fzf.enabled {
             anyhow::bail!("Provide a worktree name or enable fzf in config");
         }
 
@@ -48,8 +42,8 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
             anyhow::bail!("No worktrees found");
         }
 
-        // Use fzf to select
-        let picker = integrations::fzf::RealFzfPicker::new(config.integrations.fzf.options);
+        // Use fzf to select (move out the options Vec; the rest of ctx is unused after this).
+        let picker = integrations::fzf::RealFzfPicker::new(ctx.config.integrations.fzf.options);
         let selected = picker.pick(&items, false)?;
 
         if selected.is_empty() {
@@ -76,32 +70,28 @@ pub fn cmd_goto(name: Option<&str>, _color_mode: crate::color::ColorMode) -> Res
         return Ok(());
     }
 
-    // Load config to get worktree template (for relative path resolution)
-    let repo_root = get_main_repo_root()?;
-    let config = config::Config::load_from_repo_root(&repo_root).ok();
-
     // Priority 1: Try to find by branch name
     if let Some(entry) = list.find_by_branch(name) {
         println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
         return Ok(());
     }
 
-    // Priority 2: Try to resolve as relative path (if config is available)
-    if config.is_some() {
-        let worktree_paths: Vec<PathBuf> = list
-            .non_main()
-            .iter()
-            .map(|e| PathBuf::from(&e.path))
-            .collect();
+    // Priority 2: Try to resolve as relative path. The lenient context always
+    // populates `ctx.config` (default fallback on parse error), so the previous
+    // config-presence gate is always true and has been dropped.
+    let worktree_paths: Vec<PathBuf> = list
+        .non_main()
+        .iter()
+        .map(|e| PathBuf::from(&e.path))
+        .collect();
 
-        if let Some(worktree_root) =
-            crate::domain::worktree::calculate_worktree_root_from_paths(&worktree_paths)
-        {
-            let abs_path = worktree_root.join(name);
-            if let Some(entry) = list.find_by_path(&abs_path) {
-                println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
-                return Ok(());
-            }
+    if let Some(worktree_root) =
+        crate::domain::worktree::calculate_worktree_root_from_paths(&worktree_paths)
+    {
+        let abs_path = worktree_root.join(name);
+        if let Some(entry) = list.find_by_path(&abs_path) {
+            println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
+            return Ok(());
         }
     }
 
