@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-05
+
+### Build
+
+- Replace mise with nix dev shell ([#110](https://github.com/wadackel/ofsht/pull/110))
+
+
+### Changed
+
+- Resolve remaining dead-code abstractions and Step 1/9 follow-ups (Step 10) ([#109](https://github.com/wadackel/ofsht/pull/109))
+
+- Split parse-only DTOs and surface parse errors ([#108](https://github.com/wadackel/ofsht/pull/108))
+
+- Introduce OpenMode and route shellouts through TmuxLauncher ([#107](https://github.com/wadackel/ofsht/pull/107))
+
+- Introduce CommandContext to consolidate handler boilerplate ([#106](https://github.com/wadackel/ofsht/pull/106))
+
+- Unify add and create worktree creation flows ([#105](https://github.com/wadackel/ofsht/pull/105))
+
+- Split path utils and table formatter into dedicated modules ([#104](https://github.com/wadackel/ofsht/pull/104))
+
+- Split hooks.rs into hooks/ submodule ([#103](https://github.com/wadackel/ofsht/pull/103))
+
+- Route all git ops through GitClient and connect WorktreeService ([#102](https://github.com/wadackel/ofsht/pull/102))
+
+- Unify worktree porcelain parsers into WorktreeList ([#101](https://github.com/wadackel/ofsht/pull/101))
+
+- Redistribute 48 tests from main.rs to owning modules ([#100](https://github.com/wadackel/ofsht/pull/100))
+
+
+### Documentation
+
+- Add ofsht AgentSkill ([#112](https://github.com/wadackel/ofsht/pull/112))
+
+- Move agent instructions to AGENTS
+
+
 ## [0.7.0] - 2026-05-03
 
 ### Added
