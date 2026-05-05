@@ -43,15 +43,28 @@ impl CommandContext {
         })
     }
 
-    /// Lenient constructor: silently falls back to `Config::default()` when the
-    /// config file fails to parse. Use for commands that should keep working
-    /// even when the user's config is malformed (`list`, `cd`).
+    /// Lenient constructor: falls back to `Config::default()` when the config
+    /// file fails to parse, emitting a warning to stderr. Use for commands
+    /// that should keep working even when the user's config is malformed
+    /// (`list`, `cd`).
     ///
     /// # Errors
     /// Returns an error only when not inside a git repository.
     pub fn new_lenient(color_mode: ColorMode) -> Result<Self> {
         let repo_root = get_main_repo_root()?;
-        let config = Config::load_from_repo_root(&repo_root).unwrap_or_default();
+        let config = match Config::load_from_repo_root(&repo_root) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    crate::color::warn(
+                        color_mode,
+                        format!("Failed to load config: {e}; using defaults"),
+                    )
+                );
+                Config::default()
+            }
+        };
         Ok(Self {
             repo_root,
             config,
