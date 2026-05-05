@@ -147,9 +147,6 @@ pub enum MessageStyle {
     Info,
     /// Warning message (yellow ⚠)
     Warn,
-    /// Error message (red ✗)
-    #[allow(dead_code)]
-    Error,
 }
 
 impl MessageStyle {
@@ -159,7 +156,6 @@ impl MessageStyle {
             Self::Success => "✓",
             Self::Info => "ℹ",
             Self::Warn => "⚠",
-            Self::Error => "✗",
         }
     }
 
@@ -169,7 +165,6 @@ impl MessageStyle {
             Self::Success => "✓",
             Self::Info => "ℹ",
             Self::Warn => "⚠",
-            Self::Error => "✗",
         }
     }
 
@@ -201,7 +196,6 @@ impl<D: fmt::Display> fmt::Display for FormattedMessage<D> {
                 }
                 MessageStyle::Info => write!(f, "{} {}", symbol.bright_cyan(), self.message),
                 MessageStyle::Warn => write!(f, "{} {}", symbol.bright_yellow(), self.message),
-                MessageStyle::Error => write!(f, "{} {}", symbol.bright_red().bold(), self.message),
             }
         } else {
             write!(f, "{} {}", self.style.plain_symbol(), self.message)
@@ -224,12 +218,6 @@ pub fn warn<D: fmt::Display>(mode: ColorMode, message: D) -> FormattedMessage<D>
     MessageStyle::Warn.format(mode, message)
 }
 
-/// Format an error message (red ✗)
-#[allow(dead_code)]
-pub fn error<D: fmt::Display>(mode: ColorMode, message: D) -> FormattedMessage<D> {
-    MessageStyle::Error.format(mode, message)
-}
-
 /// Dimmed text for secondary information
 pub struct DimmedText<D> {
     mode: ColorMode,
@@ -250,44 +238,6 @@ impl<D: fmt::Display> fmt::Display for DimmedText<D> {
 #[allow(clippy::missing_const_for_fn)]
 pub fn dim<D: fmt::Display>(mode: ColorMode, text: D) -> DimmedText<D> {
     DimmedText { mode, text }
-}
-
-/// Tree item formatting for nested output (hooks, etc.)
-#[allow(dead_code)]
-pub struct TreeItem<D> {
-    mode: ColorMode,
-    message: D,
-    is_last: bool,
-    indent_level: usize,
-}
-
-impl<D: fmt::Display> fmt::Display for TreeItem<D> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let indent = "  ".repeat(self.indent_level);
-        let branch = if self.is_last { "└─" } else { "├─" };
-
-        if self.mode.should_colorize() {
-            write!(f, "{indent}{} {}", branch.dimmed(), self.message)
-        } else {
-            write!(f, "{indent}{branch} {}", self.message)
-        }
-    }
-}
-
-/// Format a tree item for nested output
-#[allow(clippy::missing_const_for_fn, dead_code)]
-pub fn tree_item<D: fmt::Display>(
-    mode: ColorMode,
-    message: D,
-    is_last: bool,
-    indent_level: usize,
-) -> TreeItem<D> {
-    TreeItem {
-        mode,
-        message,
-        is_last,
-        indent_level,
-    }
 }
 
 #[cfg(test)]
@@ -499,14 +449,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_message_never() {
-        let msg = error(ColorMode::Never, "Failed to create");
-        let output = msg.to_string();
-        assert!(!output.contains('\x1b'));
-        assert_eq!(output, "✗ Failed to create");
-    }
-
-    #[test]
     fn test_dim_text_never() {
         let dimmed = dim(ColorMode::Never, "metadata");
         let output = dimmed.to_string();
@@ -520,37 +462,5 @@ mod tests {
         let output = dimmed.to_string();
         // Should contain ANSI codes for dimmed text
         assert!(output.contains('\x1b'));
-    }
-
-    #[test]
-    fn test_tree_item_never() {
-        let item = tree_item(ColorMode::Never, "Running command", false, 1);
-        let output = item.to_string();
-        assert!(!output.contains('\x1b'));
-        assert_eq!(output, "  ├─ Running command");
-    }
-
-    #[test]
-    fn test_tree_item_last_never() {
-        let item = tree_item(ColorMode::Never, "Running command", true, 1);
-        let output = item.to_string();
-        assert!(!output.contains('\x1b'));
-        assert_eq!(output, "  └─ Running command");
-    }
-
-    #[test]
-    fn test_tree_item_nested_never() {
-        let item = tree_item(ColorMode::Never, "Nested item", false, 2);
-        let output = item.to_string();
-        assert_eq!(output, "    ├─ Nested item");
-    }
-
-    #[test]
-    fn test_tree_item_always() {
-        let item = tree_item(ColorMode::Always, "Running command", false, 1);
-        let output = item.to_string();
-        // Should contain ANSI codes
-        assert!(output.contains('\x1b'));
-        assert!(output.contains("Running command"));
     }
 }
