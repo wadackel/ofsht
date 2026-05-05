@@ -27,6 +27,7 @@ pub enum Commands {
     /// Create a new worktree with a branch
     Add {
         /// Branch name for the new worktree (read from stdin when omitted and stdin is piped)
+        #[arg(add = ArgValueCompleter::new(list_git_branches))]
         branch: Option<String>,
         /// Start point (branch, tag, or commit) for the new branch.
         /// Defaults to HEAD if not specified.
@@ -42,6 +43,7 @@ pub enum Commands {
     /// Create a new worktree without navigation
     Create {
         /// Branch name for the new worktree (read from stdin when omitted and stdin is piped)
+        #[arg(add = ArgValueCompleter::new(list_git_branches))]
         branch: Option<String>,
         /// Start point (branch, tag, or commit) for the new branch.
         /// Defaults to HEAD if not specified.
@@ -164,7 +166,6 @@ pub fn list_git_refs(current: &OsStr) -> Vec<CompletionCandidate> {
 /// Filters branches by the provided prefix
 /// Excludes symbolic refs like origin/HEAD
 #[must_use]
-#[allow(dead_code)] // Reserved for future use
 pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
     let git = RealGitClient;
     let Ok(stdout) = git.for_each_ref(
