@@ -66,13 +66,14 @@ pub fn resolve_worktree_target(
         let stdout = git
             .rev_parse(&["rev-parse", "--show-toplevel"], None)
             .map_err(|e| anyhow::anyhow!("Not in a git repository: {e}"))?;
-        Some(stdout.trim().to_string())
+        Some(PathBuf::from(stdout.trim()))
     } else {
         None
     };
 
-    // Parse all worktrees once via the unified WorktreeList API.
-    let list = WorktreeList::parse(list_stdout, None);
+    // Parse worktrees, passing the current path so list.current() resolves
+    // the active entry for "." removal.
+    let list = WorktreeList::parse(list_stdout, current_path_opt.as_deref());
     let main_entry = list
         .main()
         .context("git worktree list returned no entries")?;
@@ -89,25 +90,17 @@ pub fn resolve_worktree_target(
 
     // Special handling for "." (current worktree)
     if let Some(current_path) = current_path_opt {
-        let current_path_buf = PathBuf::from(&current_path);
-        let canonical_current = canonicalize_allow_missing(&current_path_buf);
-        let main_path_buf = PathBuf::from(&main_path);
-        let canonical_main = canonicalize_allow_missing(&main_path_buf);
+        let active = list
+            .current()
+            .context("Current directory does not match any worktree")?;
 
-        if canonical_current == canonical_main {
+        if active.path == main_path {
             anyhow::bail!("Cannot remove main worktree");
         }
 
-        // Find branch name for current worktree among non-main entries
-        let current_branch = list
-            .non_main()
-            .iter()
-            .find(|e| canonicalize_allow_missing(&PathBuf::from(&e.path)) == canonical_current)
-            .and_then(|e| e.branch.clone());
-
-        worktree_path = PathBuf::from(current_path);
-        branch_name = current_branch;
-        canonical_path = canonical_current;
+        worktree_path = current_path;
+        branch_name = active.branch.clone();
+        canonical_path = canonicalize_allow_missing(&worktree_path);
     } else if let Some(entry) = list.find_by_branch(name) {
         // Found by branch name (excludes main automatically)
         worktree_path = PathBuf::from(&entry.path);
