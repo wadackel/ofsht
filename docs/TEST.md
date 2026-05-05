@@ -734,6 +734,37 @@ ofsht rm      # launches fzf as before
 ofsht add     # exits with "branch name required"
 ```
 
+## AgentSkill Package Verification
+
+The `ofsht` AgentSkill lives at `skills/ofsht/SKILL.md` and is distributed through the GitHub CLI `gh skill` preview feature.
+
+### Validate AgentSkill Metadata
+
+```bash
+gh skill publish --dry-run
+
+# Expected:
+# - Exit code 0
+# - The `ofsht` skill is discovered
+# - No validation errors for `skills/ofsht/SKILL.md`
+```
+
+Warnings about recommended publishing metadata, such as `license` or tag protection, do not fail local package validation.
+
+### Verify Local Install Smoke Test
+
+Install into a temporary directory so the test does not modify user or project agent directories:
+
+```bash
+tmp=$(mktemp -d)
+gh skill install . ofsht --from-local --dir "$tmp" --force
+test -f "$tmp/ofsht/SKILL.md"
+
+# Expected:
+# - Exit code 0
+# - "$tmp/ofsht/SKILL.md" exists
+```
+
 ## Summary
 
 This document verified the following features:
@@ -747,5 +778,6 @@ This document verified the following features:
 - ✅ Stdin input (auto-detected when piped; CLI arg priority; per-command line semantics)
 - ✅ Path template customization
 - ✅ Local/global configuration
+- ✅ AgentSkill package validation and local install smoke test
 
 All features can be verified to work as expected.
