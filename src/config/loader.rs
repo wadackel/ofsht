@@ -3,21 +3,9 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use super::schema::{Config, IntegrationsConfig};
+use super::schema::{Config, IntegrationsConfig, ProjectConfig, UserConfig};
 
 impl Config {
-    /// Load configuration from a TOML file
-    ///
-    /// # Errors
-    /// Returns an error if the file cannot be read or parsed
-    pub fn from_file(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-        let config: Self = toml::from_str(&content)
-            .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
-        Ok(config)
-    }
-
     /// Load configuration with fallback (from current working directory)
     ///
     /// This function is provided for backward compatibility and cases where
@@ -25,12 +13,13 @@ impl Config {
     /// `load_from_repo_root()` to ensure consistent behavior across worktrees.
     ///
     /// Load priority:
-    /// 1. Local config (.ofsht.toml in current directory)
-    /// 2. Global config (~/.config/ofsht/config.toml)
+    /// 1. Local config (.ofsht.toml in current directory) — parsed as `ProjectConfig`
+    /// 2. Global config (~/.config/ofsht/config.toml) — parsed as `UserConfig`
     /// 3. Default config
     ///
     /// # Errors
-    /// Returns an error if configuration files exist but cannot be read or parsed
+    /// Returns an error if a configuration file exists but cannot be read or
+    /// parsed (including unknown-field violations from `deny_unknown_fields`).
     #[allow(dead_code)]
     pub fn load() -> Result<Self> {
         Self::load_impl(None)
@@ -43,58 +32,28 @@ impl Config {
     /// individual worktrees.
     ///
     /// Load priority:
-    /// 1. Local config (.ofsht.toml in `repo_root` directory)
-    /// 2. Global config (~/.config/ofsht/config.toml)
+    /// 1. Local config (.ofsht.toml in `repo_root` directory) — parsed as `ProjectConfig`
+    /// 2. Global config (~/.config/ofsht/config.toml) — parsed as `UserConfig`
     /// 3. Default config
     ///
     /// # Arguments
     /// * `repo_root` - Path to the main repository root (from `get_main_repo_root()`)
     ///
     /// # Errors
-    /// Returns an error if configuration files exist but cannot be read or parsed
+    /// Returns an error if a configuration file exists but cannot be read or
+    /// parsed.
     pub fn load_from_repo_root(repo_root: &Path) -> Result<Self> {
         Self::load_impl(Some(repo_root))
     }
 
-    /// Load integration settings from global config
-    /// Falls back to default if global config doesn't exist or can't be read
-    fn load_integration_from_global() -> IntegrationsConfig {
-        Self::global_config_path()
-            .and_then(|path| {
-                if path.exists() {
-                    Self::from_file(&path).ok()
-                } else {
-                    None
-                }
-            })
-            .map(|config| config.integrations)
-            .unwrap_or_default()
-    }
-
-    /// Internal implementation for config loading
+    /// Internal implementation for config loading.
+    ///
+    /// Reads project + user configs (each with the 3-branch silent fallback
+    /// in `read_config_file`) and composes them via `build_effective_config`.
     fn load_impl(repo_root: Option<&Path>) -> Result<Self> {
-        // Try local config first
-        let local_config = repo_root.map_or_else(Self::local_config_path, |root| {
-            Self::local_config_path_from(root)
-        });
-
-        if local_config.exists() {
-            let mut config = Self::from_file(&local_config)?;
-            // Integration configuration is only available in global config
-            // Load integration settings from global config (or defaults if unavailable)
-            config.integrations = Self::load_integration_from_global();
-            return Ok(config);
-        }
-
-        // Try global config
-        if let Some(global_config) = Self::global_config_path() {
-            if global_config.exists() {
-                return Self::from_file(&global_config);
-            }
-        }
-
-        // Return default config
-        Ok(Self::default())
+        let project = load_project_config(repo_root)?;
+        let user = load_user_config()?;
+        Ok(build_effective_config(project, user))
     }
 
     /// Get the local config path from a specific directory
@@ -123,15 +82,76 @@ impl Config {
 
         Some(config_home.join("ofsht").join("config.toml"))
     }
+}
 
-    /// Merge this config with another (other takes precedence)
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn merge(&self, other: &Self) -> Self {
-        Self {
-            hooks: self.hooks.merge(&other.hooks),
-            worktree: other.worktree.clone(),
-            integrations: other.integrations.clone(),
+/// Read a TOML config file with the 3-branch silent fallback.
+///
+/// - File doesn't exist (`io::ErrorKind::NotFound`) → `Ok(None)` (normal operation).
+/// - Read fails (permissions, IO) or parse fails → propagate via `with_context`.
+/// - Read + parse succeed → `Ok(Some(parsed))`.
+///
+/// `read_to_string` performs `open + read` atomically at the OS level, so the
+/// `path.exists() + open` TOCTOU window present in the previous implementation
+/// is eliminated by relying on `open` failure with `NotFound` instead.
+fn read_config_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("Failed to read config file: {}", path.display())),
+        Ok(content) => {
+            let parsed = toml::from_str::<T>(&content)
+                .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+            Ok(Some(parsed))
         }
+    }
+}
+
+/// Load the project-local `.ofsht.toml` (if present) as a `ProjectConfig`.
+///
+/// Returns `Ok(None)` when the file is absent. Propagates read or parse
+/// errors (including `deny_unknown_fields` violations such as a local file
+/// containing `[integration.*]`).
+fn load_project_config(repo_root: Option<&Path>) -> Result<Option<ProjectConfig>> {
+    let path = repo_root.map_or_else(Config::local_config_path, Config::local_config_path_from);
+    read_config_file(&path)
+}
+
+/// Load the user-level `~/.config/ofsht/config.toml` (if present) as a
+/// `UserConfig`.
+///
+/// Returns `Ok(None)` when the path cannot be resolved (no `HOME` and no
+/// absolute `XDG_CONFIG_HOME`) or the file is absent. Propagates read or
+/// parse errors.
+fn load_user_config() -> Result<Option<UserConfig>> {
+    let Some(path) = Config::global_config_path() else {
+        return Ok(None);
+    };
+    read_config_file(&path)
+}
+
+/// Compose a `ProjectConfig` and a `UserConfig` into the runtime `Config`.
+///
+/// Cases:
+/// - project ∧ user → project's `hooks` + `worktree`, user's `integrations`.
+/// - project ∧ ¬user → project's `hooks` + `worktree`, default `integrations`.
+/// - ¬project ∧ user → all of `user`'s fields.
+/// - ¬project ∧ ¬user → `Config::default()`.
+fn build_effective_config(project: Option<ProjectConfig>, user: Option<UserConfig>) -> Config {
+    match (project, user) {
+        (Some(p), Some(u)) => Config {
+            hooks: p.hooks,
+            worktree: p.worktree,
+            integrations: u.integrations,
+        },
+        (Some(p), None) => Config {
+            hooks: p.hooks,
+            worktree: p.worktree,
+            integrations: IntegrationsConfig::default(),
+        },
+        (None, Some(u)) => Config {
+            hooks: u.hooks,
+            worktree: u.worktree,
+            integrations: u.integrations,
+        },
+        (None, None) => Config::default(),
     }
 }
