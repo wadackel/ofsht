@@ -6,11 +6,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::color;
-use crate::commands::common::get_main_repo_root;
-use crate::config::{self, HookActions};
+use crate::commands::context::CommandContext;
+use crate::config::HookActions;
 use crate::domain::worktree::WorktreeList;
 use crate::hooks;
-use crate::integrations::git::{GitClient, RealGitClient};
 
 /// Sync hooks.create actions to all existing non-main worktrees
 ///
@@ -19,8 +18,7 @@ use crate::integrations::git::{GitClient, RealGitClient};
 /// git worktree list fails, or any hook execution fails.
 #[allow(clippy::too_many_lines, clippy::missing_panics_doc)]
 pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode) -> Result<()> {
-    let repo_root = get_main_repo_root()?;
-    let cfg = config::Config::load_from_repo_root(&repo_root)?;
+    let ctx = CommandContext::new_strict(color_mode)?;
 
     // No flags = all actions; otherwise use only the specified ones
     let (do_run, do_copy, do_link) = if !run && !copy && !link {
@@ -29,7 +27,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
         (run, copy, link)
     };
 
-    let create = cfg.hooks.create;
+    let create = ctx.config.hooks.create.clone();
     let actions = HookActions {
         run: if do_run { create.run } else { vec![] },
         copy: if do_copy { create.copy } else { vec![] },
@@ -41,8 +39,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
         return Ok(());
     }
 
-    let git = RealGitClient;
-    let list_stdout = git.list_worktrees(Some(&repo_root))?;
+    let list_stdout = ctx.worktree_list_stdout()?;
     let list = WorktreeList::parse(&list_stdout, None);
     let worktrees = list.non_main();
 
@@ -52,7 +49,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
     }
 
     let mp = MultiProgress::new();
-    let is_tty = color_mode.should_colorize();
+    let is_tty = ctx.color_mode.should_colorize();
     let mut errors: Vec<String> = vec![];
 
     for entry in worktrees {
@@ -71,7 +68,10 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             pb.enable_steady_tick(Duration::from_millis(100));
             Some(pb)
         } else {
-            eprintln!("{}", color::success(color_mode, format!("Synced {label}")));
+            eprintln!(
+                "{}",
+                color::success(ctx.color_mode, format!("Synced {label}"))
+            );
             None
         };
 
@@ -82,7 +82,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
                 pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
                 pb.finish_with_message(format!(
                     "{}",
-                    color::success(color_mode, format!("Synced {label}"))
+                    color::success(ctx.color_mode, format!("Synced {label}"))
                 ));
             }
             hooks::emit_line(
@@ -91,7 +91,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
                 format!(
                     "  {}",
                     color::warn(
-                        color_mode,
+                        ctx.color_mode,
                         format!("Worktree directory not found, skipping: {path}")
                     )
                 ),
@@ -99,9 +99,14 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             continue;
         }
 
-        if let Err(e) =
-            hooks::execute_hooks_with_mp(&actions, worktree_path, &repo_root, color_mode, "  ", &mp)
-        {
+        if let Err(e) = hooks::execute_hooks_with_mp(
+            &actions,
+            worktree_path,
+            &ctx.repo_root,
+            ctx.color_mode,
+            "  ",
+            &mp,
+        ) {
             errors.push(format!("{path}: {e}"));
         }
 
@@ -110,7 +115,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
             pb.finish_with_message(format!(
                 "{}",
-                color::success(color_mode, format!("Synced {label}"))
+                color::success(ctx.color_mode, format!("Synced {label}"))
             ));
         }
     }
@@ -121,7 +126,7 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             hooks::emit_line(
                 &mp,
                 is_tty,
-                format!("  {}", color::warn(color_mode, format!("Error: {err}"))),
+                format!("  {}", color::warn(ctx.color_mode, format!("Error: {err}"))),
             );
         }
         anyhow::bail!("Sync failed for {n} worktree(s)");

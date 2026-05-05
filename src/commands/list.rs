@@ -6,11 +6,10 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use crate::color;
-use crate::commands::common::get_main_repo_root;
+use crate::commands::context::CommandContext;
 use crate::commands::list_display::format_worktree_table;
-use crate::config::Config;
 use crate::domain::worktree::WorktreeList;
-use crate::integrations::git::{GitClient, RealGitClient};
+use crate::integrations::git::GitClient;
 use crate::path_utils::normalize_absolute_path;
 
 /// List all worktrees
@@ -20,17 +19,11 @@ use crate::path_utils::normalize_absolute_path;
 /// - Git worktree list command fails
 /// - Output parsing fails
 pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
-    // Get worktree list in porcelain format
-    let git = RealGitClient;
-    let stdout = git.list_worktrees(None)?;
+    let ctx = CommandContext::new_lenient(color_mode)?;
+    let stdout = ctx.worktree_list_stdout()?;
 
     // Get current directory for active worktree detection
     let current_dir = std::env::current_dir().ok();
-
-    // Load config from main repository root
-    let config = get_main_repo_root()
-        .ok()
-        .and_then(|repo_root| Config::load_from_repo_root(&repo_root).ok());
 
     // Determine stream/format based ONLY on TTY status
     // Color mode only affects ANSI emission, not which stream or format
@@ -44,7 +37,10 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
         // Get commit times for all worktrees
         let commit_times: Vec<Option<DateTime<Utc>>> = entries
             .iter()
-            .map(|entry| git.last_commit_time(&std::path::PathBuf::from(&entry.path)))
+            .map(|entry| {
+                ctx.git
+                    .last_commit_time(&std::path::PathBuf::from(&entry.path))
+            })
             .collect();
 
         // Format and print table to stderr (color_mode controls ANSI emission)
@@ -53,7 +49,7 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
             &commit_times,
             show_path,
             color_mode,
-            config.as_ref(),
+            Some(&ctx.config),
         );
         for line in lines {
             eprintln!("{line}");
@@ -67,7 +63,10 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
 
             let commit_times: Vec<Option<DateTime<Utc>>> = entries
                 .iter()
-                .map(|entry| git.last_commit_time(&std::path::PathBuf::from(&entry.path)))
+                .map(|entry| {
+                    ctx.git
+                        .last_commit_time(&std::path::PathBuf::from(&entry.path))
+                })
                 .collect();
 
             // Format and print table to stdout
@@ -77,7 +76,7 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
                 &commit_times,
                 show_path,
                 color_mode,
-                config.as_ref(),
+                Some(&ctx.config),
             );
             for line in lines {
                 println!("{line}");

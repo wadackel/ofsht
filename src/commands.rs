@@ -5,6 +5,7 @@ pub mod add;
 pub mod cd;
 pub mod common;
 pub mod completion;
+pub mod context;
 pub mod create;
 pub mod init;
 pub mod list;

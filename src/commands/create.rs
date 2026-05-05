@@ -5,8 +5,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
 use crate::color;
-use crate::commands::common::get_main_repo_root;
-use crate::config;
+use crate::commands::context::CommandContext;
 use crate::hooks;
 use crate::integrations::git::RealGitClient;
 use crate::integrations::zoxide::{is_zoxide_available, RealZoxideClient};
@@ -35,11 +34,7 @@ pub fn cmd_create(
     };
     let branch = branch_owned.as_str();
 
-    // Get main repository root
-    let repo_root = get_main_repo_root()?;
-
-    // Load configuration from repo root
-    let config = config::Config::load_from_repo_root(&repo_root)?;
+    let ctx = CommandContext::new_strict(color_mode)?;
 
     let mp = MultiProgress::new();
     let is_tty = color_mode.should_colorize();
@@ -61,16 +56,16 @@ pub fn cmd_create(
 
     // Resolve zoxide gating before handing control to the service so the
     // service does not need to know about zoxide-availability detection.
-    let zoxide_enabled = config.integrations.zoxide.enabled && is_zoxide_available();
+    let zoxide_enabled = ctx.config.integrations.zoxide.enabled && is_zoxide_available();
 
     let service = WorktreeService::new(RealGitClient, RealZoxideClient);
 
-    let hook_actions = &config.hooks.create;
+    let hook_actions = &ctx.config.hooks.create;
     let req = CreateWorktreeRequest {
         branch,
         start_point,
-        repo_root: &repo_root,
-        path_template: &config.worktree.dir,
+        repo_root: &ctx.repo_root,
+        path_template: &ctx.config.worktree.dir,
         zoxide_enabled,
     };
 
@@ -93,7 +88,7 @@ pub fn cmd_create(
             hooks::execute_hooks_lenient_with_mp(
                 hook_actions,
                 path,
-                &repo_root,
+                &ctx.repo_root,
                 color_mode,
                 "  ",
                 &mp,
