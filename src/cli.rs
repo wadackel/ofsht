@@ -1,7 +1,3 @@
-// CommandFactory is used by tests via Cli::command()
-#[allow(unused_imports)]
-use clap::CommandFactory;
-
 use clap::{Parser, Subcommand};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use std::collections::HashSet;
@@ -287,7 +283,6 @@ mod tests {
     #[test]
     fn test_list_git_branches_returns_branches_in_git_repo() {
         // When running in a git repo, should return branch list (at least one branch exists)
-        use std::ffi::OsStr;
         let result = list_git_branches(OsStr::new(""));
         // In a valid git repo, there should be at least one branch
         assert!(
@@ -299,7 +294,6 @@ mod tests {
     #[test]
     fn test_list_git_branches_returns_completion_candidates() {
         // Verify that the returned values are valid CompletionCandidates
-        use std::ffi::OsStr;
         let result = list_git_branches(OsStr::new(""));
         for candidate in result {
             // Each candidate should have non-empty value
@@ -313,7 +307,6 @@ mod tests {
     #[test]
     fn test_list_git_branches_filters_by_prefix() {
         // Test that branches are filtered by prefix
-        use std::ffi::OsStr;
 
         // Get all branches first
         let all_branches = list_git_branches(OsStr::new(""));
@@ -406,7 +399,6 @@ branch refs/heads/feature-b
     #[test]
     fn test_list_git_worktrees_includes_at_symbol() {
         // Test that @ is included in worktree completion candidates
-        use std::ffi::OsStr;
         let result = list_git_worktrees(OsStr::new(""));
         // Should include @ as the first candidate (or at least include it)
         let has_at = result.iter().any(|c| c.get_value() == "@");
@@ -416,7 +408,6 @@ branch refs/heads/feature-b
     #[test]
     fn test_list_git_worktrees_filters_at_symbol() {
         // Test that @ is filtered correctly by prefix
-        use std::ffi::OsStr;
         let result = list_git_worktrees(OsStr::new("@"));
         // Should include @ when prefix is @
         let has_at = result.iter().any(|c| c.get_value() == "@");
@@ -429,7 +420,6 @@ branch refs/heads/feature-b
     #[test]
     fn test_list_git_worktrees_excludes_at_with_different_prefix() {
         // Test that @ is excluded when prefix doesn't match
-        use std::ffi::OsStr;
         let result = list_git_worktrees(OsStr::new("feature"));
         // Should not include @ when prefix is "feature"
         let has_at = result.iter().any(|c| c.get_value() == "@");
