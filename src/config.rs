@@ -10,8 +10,8 @@ pub mod template_generator;
 // Note: These are part of the public API and used in tests, even if not all are used in main.rs
 #[allow(unused_imports)]
 pub use schema::{
-    Config, FzfConfig, GhConfig, HookActions, Hooks, IntegrationsConfig, OpenMode, TmuxBehavior,
-    TmuxConfig, WorktreeConfig, ZoxideConfig,
+    Config, FzfConfig, GhConfig, HookActions, Hooks, IntegrationsConfig, OpenMode, ProjectConfig,
+    TmuxBehavior, TmuxConfig, UserConfig, WorktreeConfig, ZoxideConfig,
 };
 
 #[cfg(test)]
@@ -240,6 +240,83 @@ mod tests {
         assert!(config.integrations.gh.enabled);
     }
 
+    // ---- ProjectConfig / UserConfig parse-only DTO unit tests ----
+
+    #[test]
+    fn test_project_config_accepts_hooks_and_worktree() {
+        let toml = r#"
+            [worktree]
+            dir = "/tmp/{branch}"
+
+            [hooks.create]
+            run = ["echo hi"]
+
+            [hooks.delete]
+            run = ["echo bye"]
+        "#;
+        let parsed: ProjectConfig = toml::from_str(toml).expect("project-only TOML must parse");
+        assert_eq!(parsed.worktree.dir, "/tmp/{branch}");
+        assert_eq!(parsed.hooks.create.run, vec!["echo hi"]);
+        assert_eq!(parsed.hooks.delete.run, vec!["echo bye"]);
+    }
+
+    #[test]
+    fn test_project_config_denies_integration_section() {
+        let toml = r#"
+            [worktree]
+            dir = "/tmp/{branch}"
+
+            [integration.zoxide]
+            enabled = false
+        "#;
+        let result: Result<ProjectConfig, _> = toml::from_str(toml);
+        assert!(
+            result.is_err(),
+            "ProjectConfig must reject [integration.*] sections"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("unknown field `integration`"),
+            "expected unknown-field error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_user_config_accepts_integration_alias() {
+        let toml = r#"
+            [worktree]
+            dir = "/tmp/{branch}"
+
+            [integration.tmux]
+            behavior = "always"
+            create = "pane"
+            open = "pane"
+        "#;
+        let parsed: UserConfig =
+            toml::from_str(toml).expect("user TOML with integration alias must parse");
+        assert_eq!(parsed.integrations.tmux.behavior, TmuxBehavior::Always);
+        assert_eq!(parsed.integrations.tmux.create, OpenMode::Pane);
+        assert_eq!(parsed.integrations.tmux.open, OpenMode::Pane);
+    }
+
+    #[test]
+    fn test_user_config_denies_unknown_top_level_field() {
+        let toml = r#"
+            [wortkree]
+            dir = "/typo"
+        "#;
+        let result: Result<UserConfig, _> = toml::from_str(toml);
+        assert!(
+            result.is_err(),
+            "UserConfig must reject unknown top-level fields"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("unknown field `wortkree`"),
+            "expected unknown-field error, got: {msg}"
+        );
+    }
+
     #[test]
     fn test_local_config_path() {
         let path = Config::local_config_path();
@@ -299,8 +376,10 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_load_from_repo_root_fallback_to_global() {
-        // Create a temporary repo root without .ofsht.toml
+        // Serial: load_from_repo_root reads the global config via
+        // `XDG_CONFIG_HOME`, which other tests mutate.
         let temp_dir = std::env::temp_dir().join("ofsht_test_repo");
         std::fs::create_dir_all(&temp_dir).ok();
 
@@ -313,8 +392,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_load_from_specific_repo_root() {
-        // Create a temporary repo root with .ofsht.toml
+        // Serial: same env-state dependency as the fallback test above.
         let temp_dir = std::env::temp_dir().join("ofsht_test_repo_specific");
         std::fs::create_dir_all(&temp_dir).ok();
 
@@ -337,29 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_configs() {
-        let base = Config {
-            worktree: WorktreeConfig {
-                dir: "/base/{branch}".to_string(),
-            },
-            hooks: Hooks::default(),
-            integrations: IntegrationsConfig::default(),
-        };
-
-        let override_config = Config {
-            worktree: WorktreeConfig {
-                dir: "/override/{branch}".to_string(),
-            },
-            hooks: Hooks::default(),
-            integrations: IntegrationsConfig::default(),
-        };
-
-        let merged = base.merge(&override_config);
-        assert_eq!(merged.worktree.dir, "/override/{branch}");
-    }
-
-    #[test]
-    fn test_local_config_ignores_integrations() {
+    fn test_local_config_with_integration_section_fails_to_load() {
         let temp_dir = std::env::temp_dir().join("ofsht_test_local_integrations");
         std::fs::create_dir_all(&temp_dir).ok();
 
@@ -379,24 +437,23 @@ mod tests {
         )
         .ok();
 
+        // ProjectConfig denies `integration` at the top level via
+        // `#[serde(deny_unknown_fields)]`. Loading must fail with a parse
+        // error mentioning the offending field.
         let result = Config::load_from_repo_root(&temp_dir);
-        assert!(result.is_ok());
-        let config = result.unwrap();
-
-        // Worktree config should be loaded from local
-        assert_eq!(config.worktree.dir, "/tmp/{branch}");
-
-        // Integration config should be from global (or defaults)
-        // Since we don't have a global config in test, it should use defaults
-        assert!(config.integrations.zoxide.enabled); // Default is true
-        assert!(config.integrations.fzf.enabled); // Default is true
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("unknown field `integration`"),
+            "expected unknown-field error, got: {msg}"
+        );
 
         // Clean up
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     #[test]
-    fn test_local_config_uses_global_integration_settings() {
+    fn test_local_config_with_integration_section_fails_even_with_other_fields() {
         let temp_dir = std::env::temp_dir().join("ofsht_test_integration_override");
         std::fs::create_dir_all(&temp_dir).ok();
 
@@ -413,14 +470,15 @@ mod tests {
         )
         .ok();
 
-        let config = Config::load_from_repo_root(&temp_dir).unwrap();
-
-        // Local worktree settings should be used
-        assert_eq!(config.worktree.dir, "/local/{branch}");
-
-        // Integration settings should be ignored from local config
-        // and should use global config or defaults
-        assert!(config.integrations.zoxide.enabled); // Default
+        // Even when paired with valid `[worktree]` and `[hooks.*]`, an
+        // `[integration.*]` section in a project-local file is rejected.
+        let result = Config::load_from_repo_root(&temp_dir);
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("unknown field `integration`"),
+            "expected unknown-field error, got: {msg}"
+        );
 
         // Clean up
         std::fs::remove_dir_all(&temp_dir).ok();
@@ -460,8 +518,177 @@ mod tests {
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
+    // ---- build_effective_config composition matrix ----
+    // ¬project ∧ ¬user is covered by `test_load_from_repo_root_fallback_to_global` above.
+
     #[test]
-    fn test_local_config_ignores_zoxide() {
+    #[serial_test::serial]
+    fn test_compose_project_and_user_uses_user_integrations() {
+        let xdg = std::env::temp_dir().join("ofsht_test_compose_both_xdg");
+        let global_dir = xdg.join("ofsht");
+        std::fs::create_dir_all(&global_dir).ok();
+        std::fs::write(
+            global_dir.join("config.toml"),
+            r#"
+                [worktree]
+                dir = "/global/{branch}"
+
+                [integration.zoxide]
+                enabled = false
+
+                [integration.fzf]
+                enabled = false
+            "#,
+        )
+        .ok();
+        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+
+        let repo_root = std::env::temp_dir().join("ofsht_test_compose_both_repo");
+        std::fs::create_dir_all(&repo_root).ok();
+        std::fs::write(
+            repo_root.join(".ofsht.toml"),
+            r#"
+                [worktree]
+                dir = "/local/{branch}"
+
+                [hooks.create]
+                run = ["echo project"]
+            "#,
+        )
+        .ok();
+
+        let config = Config::load_from_repo_root(&repo_root).expect("compose must succeed");
+
+        // project's hooks + worktree
+        assert_eq!(config.worktree.dir, "/local/{branch}");
+        assert_eq!(config.hooks.create.run, vec!["echo project"]);
+        // user's integrations override defaults
+        assert!(!config.integrations.zoxide.enabled);
+        assert!(!config.integrations.fzf.enabled);
+
+        // Clean up
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::fs::remove_dir_all(&xdg).ok();
+        std::fs::remove_dir_all(&repo_root).ok();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_compose_project_only_uses_default_integrations() {
+        // Point XDG at an empty dir so the global file is absent.
+        let xdg = std::env::temp_dir().join("ofsht_test_compose_project_only_xdg");
+        std::fs::create_dir_all(&xdg).ok();
+        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+
+        let repo_root = std::env::temp_dir().join("ofsht_test_compose_project_only_repo");
+        std::fs::create_dir_all(&repo_root).ok();
+        std::fs::write(
+            repo_root.join(".ofsht.toml"),
+            r#"
+                [worktree]
+                dir = "/project-only/{branch}"
+
+                [hooks.delete]
+                run = ["echo bye"]
+            "#,
+        )
+        .ok();
+
+        let config = Config::load_from_repo_root(&repo_root).expect("compose must succeed");
+
+        // project's hooks + worktree
+        assert_eq!(config.worktree.dir, "/project-only/{branch}");
+        assert_eq!(config.hooks.delete.run, vec!["echo bye"]);
+        // integrations fall back to default (zoxide/fzf/gh enabled, tmux Auto)
+        assert!(config.integrations.zoxide.enabled);
+        assert!(config.integrations.fzf.enabled);
+        assert!(config.integrations.gh.enabled);
+        assert_eq!(config.integrations.tmux.behavior, TmuxBehavior::Auto);
+
+        // Clean up
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::fs::remove_dir_all(&xdg).ok();
+        std::fs::remove_dir_all(&repo_root).ok();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_compose_user_only_uses_full_user_config() {
+        let xdg = std::env::temp_dir().join("ofsht_test_compose_user_only_xdg");
+        let global_dir = xdg.join("ofsht");
+        std::fs::create_dir_all(&global_dir).ok();
+        std::fs::write(
+            global_dir.join("config.toml"),
+            r#"
+                [worktree]
+                dir = "/user-only/{branch}"
+
+                [hooks.create]
+                run = ["echo user"]
+
+                [integration.tmux]
+                behavior = "always"
+                create = "pane"
+            "#,
+        )
+        .ok();
+        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+
+        // Empty repo root — no .ofsht.toml.
+        let repo_root = std::env::temp_dir().join("ofsht_test_compose_user_only_repo");
+        std::fs::create_dir_all(&repo_root).ok();
+
+        let config = Config::load_from_repo_root(&repo_root).expect("compose must succeed");
+
+        // All fields come from user config
+        assert_eq!(config.worktree.dir, "/user-only/{branch}");
+        assert_eq!(config.hooks.create.run, vec!["echo user"]);
+        assert_eq!(config.integrations.tmux.behavior, TmuxBehavior::Always);
+        assert_eq!(config.integrations.tmux.create, OpenMode::Pane);
+
+        // Clean up
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::fs::remove_dir_all(&xdg).ok();
+        std::fs::remove_dir_all(&repo_root).ok();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_global_config_parse_error_propagates() {
+        // Plant a malformed global config and verify the error surfaces
+        // instead of being swallowed by the previous `.ok()` fallback.
+        let xdg = std::env::temp_dir().join("ofsht_test_global_parse_error_xdg");
+        let global_dir = xdg.join("ofsht");
+        std::fs::create_dir_all(&global_dir).ok();
+        let global_path = global_dir.join("config.toml");
+        std::fs::write(&global_path, "this is not = valid toml [[").ok();
+        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+
+        // Use a non-existent local path so the loader falls through to the
+        // global file, which is malformed.
+        let repo_root = std::env::temp_dir().join("ofsht_test_global_parse_error_repo");
+        std::fs::create_dir_all(&repo_root).ok();
+
+        let result = Config::load_from_repo_root(&repo_root);
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("Failed to parse config file"),
+            "expected parse-error context, got: {msg}"
+        );
+        assert!(
+            msg.contains(global_path.to_string_lossy().as_ref()),
+            "expected global path in error, got: {msg}"
+        );
+
+        // Clean up
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::fs::remove_dir_all(&xdg).ok();
+        std::fs::remove_dir_all(&repo_root).ok();
+    }
+
+    #[test]
+    fn test_local_config_integration_zoxide_only_fails() {
         let temp_dir = std::env::temp_dir().join("ofsht_test_zoxide_ignore");
         std::fs::create_dir_all(&temp_dir).ok();
 
@@ -475,16 +702,20 @@ mod tests {
         )
         .ok();
 
-        let config = Config::load_from_repo_root(&temp_dir).unwrap();
-        // Should use global or default (true), not local setting
-        assert!(config.integrations.zoxide.enabled);
+        let result = Config::load_from_repo_root(&temp_dir);
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("unknown field `integration`"),
+            "expected unknown-field error, got: {msg}"
+        );
 
         // Clean up
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     #[test]
-    fn test_local_config_ignores_gh() {
+    fn test_local_config_integration_gh_only_fails() {
         let temp_dir = std::env::temp_dir().join("ofsht_test_gh_ignore");
         std::fs::create_dir_all(&temp_dir).ok();
 
@@ -498,9 +729,13 @@ mod tests {
         )
         .ok();
 
-        let config = Config::load_from_repo_root(&temp_dir).unwrap();
-        // Should use global or default (true), not local setting
-        assert!(config.integrations.gh.enabled);
+        let result = Config::load_from_repo_root(&temp_dir);
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("unknown field `integration`"),
+            "expected unknown-field error, got: {msg}"
+        );
 
         // Clean up
         std::fs::remove_dir_all(&temp_dir).ok();
@@ -515,7 +750,7 @@ mod tests {
             tmux_available: true,
         };
         let template = ctx.generate_global();
-        let result: Result<Config, _> = toml::from_str(&template);
+        let result: Result<UserConfig, _> = toml::from_str(&template);
         assert!(result.is_ok());
     }
 
@@ -528,7 +763,7 @@ mod tests {
             tmux_available: true,
         };
         let template = ctx.generate_local();
-        let result: Result<Config, _> = toml::from_str(&template);
+        let result: Result<ProjectConfig, _> = toml::from_str(&template);
         assert!(result.is_ok());
     }
 

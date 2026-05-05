@@ -3,9 +3,43 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Configuration for ofsht
+/// Effective runtime configuration for ofsht.
+///
+/// Composed by `build_effective_config` from a `ProjectConfig` (local
+/// `.ofsht.toml`) and a `UserConfig` (global `~/.config/ofsht/config.toml`).
+/// Consumers receive this type via `Config::load_from_repo_root`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    #[serde(default)]
+    pub hooks: Hooks,
+    #[serde(default)]
+    pub worktree: WorktreeConfig,
+    #[serde(default, alias = "integration")]
+    pub integrations: IntegrationsConfig,
+}
+
+/// Parse-only DTO for `.ofsht.toml` (project-root local config).
+///
+/// Top-level `deny_unknown_fields` enforces "integrations only in global
+/// config" at parse time — a local file containing `[integration.*]` fails
+/// loudly instead of being silently ignored.
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectConfig {
+    #[serde(default)]
+    pub hooks: Hooks,
+    #[serde(default)]
+    pub worktree: WorktreeConfig,
+}
+
+/// Parse-only DTO for `~/.config/ofsht/config.toml` (user-level global
+/// config). Carries integrations alongside hooks/worktree.
+///
+/// Top-level `deny_unknown_fields` surfaces top-level typos (`[hook]` instead
+/// of `[hooks]`, etc.) as parse errors rather than silently dropping them.
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct UserConfig {
     #[serde(default)]
     pub hooks: Hooks,
     #[serde(default)]
@@ -175,30 +209,4 @@ impl Default for GhConfig {
 
 const fn default_gh_enabled() -> bool {
     true
-}
-
-impl Hooks {
-    #[allow(dead_code)]
-    pub(super) fn merge(&self, other: &Self) -> Self {
-        Self {
-            create: self.create.merge(&other.create),
-            delete: self.delete.merge(&other.delete),
-        }
-    }
-}
-
-impl HookActions {
-    #[allow(dead_code)]
-    pub(super) fn merge(&self, other: &Self) -> Self {
-        let mut run = self.run.clone();
-        run.extend(other.run.clone());
-
-        let mut copy = self.copy.clone();
-        copy.extend(other.copy.clone());
-
-        let mut link = self.link.clone();
-        link.extend(other.link.clone());
-
-        Self { run, copy, link }
-    }
 }
