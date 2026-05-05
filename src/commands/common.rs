@@ -3,7 +3,7 @@
 //! This module contains shared helper functions used across multiple commands.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::domain::worktree::WorktreeList;
 use crate::integrations::git::{GitClient, RealGitClient};
@@ -56,7 +56,6 @@ pub fn get_main_repo_root() -> Result<PathBuf> {
 pub fn resolve_worktree_target(
     name: &str,
     list_stdout: &str,
-    _repo_root: &Path,
 ) -> Result<(PathBuf, PathBuf, Option<String>, bool)> {
     let is_current_worktree_removal = name == ".";
 
@@ -90,9 +89,12 @@ pub fn resolve_worktree_target(
 
     // Special handling for "." (current worktree)
     if let Some(current_path) = current_path_opt {
-        let active = list
-            .current()
-            .context("Current directory does not match any worktree")?;
+        let active = list.current().with_context(|| {
+            format!(
+                "Current directory {} does not match any tracked worktree",
+                current_path.display()
+            )
+        })?;
 
         if active.path == main_path {
             anyhow::bail!("Cannot remove main worktree");
