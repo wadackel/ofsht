@@ -16,39 +16,21 @@ Thank you for your interest in contributing to ofsht! This document provides gui
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install) 1.70+ (2021 edition)
-- [mise](https://mise.jdx.dev/) - Development tool version manager (includes just and vhs)
+- [Nix](https://nixos.org/) with flakes enabled
 - Git 2.5+ (for worktree support)
-
-#### Installing mise
-
-**macOS/Linux (Homebrew)**:
-```bash
-brew install mise
-```
-
-**Linux/macOS (Script)**:
-```bash
-curl https://mise.run | sh
-```
-
-**Other platforms**: See [mise installation guide](https://mise.jdx.dev/getting-started.html)
-
-> [!TIP]
-> **Dogfooding**: ofsht itself is also installable via mise: `mise use -g ubi:wadackel/ofsht`
->
-> Note: `mise install` (without arguments) only installs development tools from `mise.toml` (just, vhs). Installing ofsht via mise is optional and requires the explicit `mise use -g` command above.
 
 #### Installing Development Tools
 
-After installing mise:
+Enter the development shell:
+
 ```bash
-mise install  # Installs just and vhs as specified in mise.toml
+nix develop
 ```
 
-This will install:
-- `just` 1.43.1 - Command runner for development tasks
-- `vhs` (latest) - Terminal demo video generator (optional, for documentation work)
+The shell provides:
+- Rust toolchain with `rustfmt` and `clippy`
+- `just` - Command runner for development tasks
+- `vhs` - Terminal demo video generator (optional, for documentation work)
 
 ### Building from Source
 
@@ -57,8 +39,8 @@ This will install:
 git clone https://github.com/wadackel/ofsht.git
 cd ofsht
 
-# Install development tools
-mise install
+# Enter the reproducible development shell
+nix develop
 
 # Build the project
 cargo build
@@ -565,28 +547,16 @@ The Homebrew tap (`wadackel/homebrew-tap`) is automatically updated on each rele
   - GitHub App must be installed on both `ofsht` and `homebrew-tap` repositories
   - GitHub App permissions required: actions (read/write), contents (read)
 
-### mise ubi Distribution
+### Binary Release Assets
 
-ofsht binaries are automatically compatible with mise's [ubi backend](https://mise.jdx.dev/dev-tools/backends/ubi.html):
+ofsht publishes prebuilt binaries as GitHub Release assets.
 
-```bash
-mise use -g ubi:wadackel/ofsht
-```
+**Requirements**:
+- Asset naming follows platform conventions: `ofsht-${target}.tar.gz`
+- Archive contains a single executable at the root level
+- Supported platforms: Linux (x86_64 gnu/musl), macOS (x86_64/aarch64)
 
-**How it works**:
-1. mise's ubi backend reads GitHub releases directly from this repository
-2. Automatically detects the user's platform (OS + CPU architecture)
-3. Downloads and extracts the appropriate binary from release assets
-4. No maintainer action or registry registration required
-
-**Requirements** (already met):
-- ✅ Asset naming follows platform conventions: `ofsht-${target}.tar.gz`
-- ✅ Archive contains single executable at root level
-- ✅ Supported platforms: Linux (x86_64 gnu/musl), macOS (x86_64/aarch64)
-
-**Important**: Asset naming is critical for mise compatibility. The release workflow (`.github/workflows/release.yaml:181-185`) generates archives in the format `ofsht-{target}.tar.gz` containing a single `ofsht` binary. Changing this format will break mise installations.
-
-**Registry decision**: We intentionally do NOT register ofsht in the [mise registry](https://mise.jdx.dev/registry.html). The ubi backend works perfectly without registration, and users can install via `ubi:wadackel/ofsht` directly. This avoids the maintenance burden of keeping a registry entry updated.
+**Important**: Asset naming is part of the public release contract. The release workflow (`.github/workflows/release.yaml:180-187`) generates archives in the format `ofsht-{target}.tar.gz` containing a single `ofsht` binary. Changing this format will break scripted installations and downstream package automation.
 
 ### Manual Release
 

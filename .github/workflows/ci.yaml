@@ -37,45 +37,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Setup Rust toolchain
-        uses: ./.github/actions/setup-rust
+      - name: Setup Nix dev shell
+        uses: ./.github/actions/setup-nix-devshell
         with:
-          components: clippy,rustfmt
-
-      - name: Setup mise
-        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151  # v4.0.1
-        with:
-          version: 2025.11.5
-          install: true
-          cache: true
-          cache-key-prefix: mise-${{ hashFiles('mise.toml') }}-
-
-      - name: Cache Cargo dependencies
-        id: cargo-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
-            ${{ runner.os }}-cargo-
+          cache-key-prefix: nix-ci-${{ runner.os }}
 
       - name: Format check
-        run: just fmt-ci
+        run: nix develop --command just fmt-ci
 
       - name: Clippy
-        run: just clippy-ci
+        run: nix develop --command just clippy-ci
 
       - name: Tests
-        run: just test-ci
+        run: nix develop --command just test-ci
         timeout-minutes: 10
-
-      - name: Cleanup incremental builds
-        if: steps.cargo-cache.outputs.cache-hit != 'true'
-        run: |
-          rm -rf target/debug/incremental/
-          rm -rf target/debug/.fingerprint/
