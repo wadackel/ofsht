@@ -2,15 +2,15 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::color;
 use crate::commands::context::CommandContext;
+use crate::config::OpenMode;
 use crate::domain::worktree::{
     calculate_relative_path, calculate_worktree_root_from_paths, WorktreeList,
 };
 use crate::integrations::git::{GitClient, RealGitClient};
-use crate::integrations::tmux::{sanitize_window_name, RealTmuxLauncher, TmuxLauncher};
+use crate::integrations::tmux::{RealTmuxLauncher, TmuxLauncher};
 use crate::path_utils::canonicalize_allow_missing;
 
 /// Worktree entry for the open command
@@ -20,17 +20,14 @@ struct OpenWorktree {
 }
 
 /// Resolve the open mode from CLI flags and config
-fn resolve_mode(pane: bool, window: bool, config_value: &str) -> &'static str {
+const fn resolve_mode(pane: bool, window: bool, config_value: OpenMode) -> OpenMode {
     if pane {
-        return "pane";
+        return OpenMode::Pane;
     }
     if window {
-        return "window";
+        return OpenMode::Window;
     }
-    match config_value {
-        "pane" => "pane",
-        _ => "window",
-    }
+    config_value
 }
 
 /// Get the current worktree path via git rev-parse --show-toplevel
@@ -131,11 +128,11 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
         return Ok(());
     }
 
-    let mode = resolve_mode(pane, window, &ctx.config.integrations.tmux.open);
+    let mode = resolve_mode(pane, window, ctx.config.integrations.tmux.open);
 
     match mode {
-        "pane" => open_as_panes(&open_list, color_mode)?,
-        _ => open_as_windows(&launcher, &open_list, color_mode)?,
+        OpenMode::Pane => open_as_panes(&launcher, &open_list, color_mode)?,
+        OpenMode::Window => open_as_windows(&launcher, &open_list, color_mode)?,
     }
 
     let skip_msg = skipped_name
@@ -158,13 +155,12 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
 }
 
 fn open_as_windows(
-    launcher: &RealTmuxLauncher,
+    launcher: &dyn TmuxLauncher,
     worktrees: &[OpenWorktree],
     color_mode: color::ColorMode,
 ) -> Result<()> {
     for wt in worktrees {
-        let window_name = sanitize_window_name(&wt.name);
-        if let Err(e) = launcher.create_window(Path::new(&wt.path), &window_name) {
+        if let Err(e) = launcher.create_window(Path::new(&wt.path), &wt.name) {
             anyhow::bail!("Failed to create window for {}: {e}", wt.name);
         }
         eprintln!(
@@ -175,52 +171,45 @@ fn open_as_windows(
     Ok(())
 }
 
-fn open_as_panes(worktrees: &[OpenWorktree], color_mode: color::ColorMode) -> Result<()> {
+fn open_as_panes(
+    launcher: &dyn TmuxLauncher,
+    worktrees: &[OpenWorktree],
+    color_mode: color::ColorMode,
+) -> Result<()> {
     let mut errors: Vec<String> = Vec::new();
     let mut success_count = 0;
 
     for wt in worktrees {
-        let output = Command::new("tmux")
-            .arg("split-window")
-            .arg("-h")
-            .arg("-c")
-            .arg(&wt.path)
-            .output()
-            .context("Failed to execute tmux split-window")?;
-
-        if output.status.success() {
-            success_count += 1;
-            eprintln!(
-                "{}",
-                color::info(color_mode, format!("  + split: {}", wt.name))
-            );
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            errors.push(format!("{}: {}", wt.name, stderr.trim()));
-            eprintln!(
-                "{}",
-                color::warn(
-                    color_mode,
-                    format!("  ! split failed for {}: {}", wt.name, stderr.trim())
-                )
-            );
+        match launcher.split_pane(Path::new(&wt.path)) {
+            Ok(()) => {
+                success_count += 1;
+                eprintln!(
+                    "{}",
+                    color::info(color_mode, format!("  + split: {}", wt.name))
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                errors.push(format!("{}: {msg}", wt.name));
+                eprintln!(
+                    "{}",
+                    color::warn(
+                        color_mode,
+                        format!("  ! split failed for {}: {msg}", wt.name)
+                    )
+                );
+            }
         }
     }
 
     // Apply tiled layout for even distribution
     if success_count > 0 {
-        let layout_output = Command::new("tmux")
-            .args(["select-layout", "tiled"])
-            .output()
-            .context("Failed to execute tmux select-layout")?;
-
-        if !layout_output.status.success() {
-            let stderr = String::from_utf8_lossy(&layout_output.stderr);
+        if let Err(e) = launcher.select_tiled_layout() {
             eprintln!(
                 "{}",
                 color::warn(
                     color_mode,
-                    format!("Warning: select-layout tiled failed: {}", stderr.trim())
+                    format!("Warning: select-layout tiled failed: {e}")
                 )
             );
         }
@@ -236,41 +225,98 @@ fn open_as_panes(worktrees: &[OpenWorktree], color_mode: color::ColorMode) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::color::ColorMode;
+    use crate::integrations::tmux::tests::MockTmuxLauncher;
+
+    fn worktrees_for_test(n: usize) -> Vec<OpenWorktree> {
+        (0..n)
+            .map(|i| OpenWorktree {
+                path: format!("/tmp/wt{i}"),
+                name: format!("wt{i}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_open_as_panes_all_success_calls_select_tiled_layout_once() {
+        let mock = MockTmuxLauncher::default();
+        let wts = worktrees_for_test(3);
+        let result = open_as_panes(&mock, &wts, ColorMode::Never);
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert_eq!(
+            mock.select_tiled_layout_calls.get(),
+            1,
+            "select_tiled_layout should be invoked exactly once when at least one split succeeds"
+        );
+    }
+
+    #[test]
+    fn test_open_as_panes_all_split_fail_bails_and_skips_layout() {
+        let mock = MockTmuxLauncher {
+            split_pane_should_fail: true,
+            ..Default::default()
+        };
+        let wts = worktrees_for_test(2);
+        let result = open_as_panes(&mock, &wts, ColorMode::Never);
+        assert!(result.is_err(), "expected Err when all splits fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("All pane splits failed"),
+            "unexpected error message: {msg}"
+        );
+        assert_eq!(
+            mock.select_tiled_layout_calls.get(),
+            0,
+            "select_tiled_layout must not be invoked when success_count is 0"
+        );
+    }
+
+    #[test]
+    fn test_open_as_panes_select_layout_failure_is_warn_only() {
+        let mock = MockTmuxLauncher {
+            select_tiled_layout_should_fail: true,
+            ..Default::default()
+        };
+        let wts = worktrees_for_test(2);
+        let result = open_as_panes(&mock, &wts, ColorMode::Never);
+        assert!(
+            result.is_ok(),
+            "select_tiled_layout failure must not propagate as Err: {result:?}"
+        );
+        assert_eq!(mock.select_tiled_layout_calls.get(), 1);
+    }
 
     #[test]
     fn test_resolve_mode_pane_flag() {
-        assert_eq!(resolve_mode(true, false, "window"), "pane");
+        assert_eq!(resolve_mode(true, false, OpenMode::Window), OpenMode::Pane);
     }
 
     #[test]
     fn test_resolve_mode_window_flag() {
-        assert_eq!(resolve_mode(false, true, "pane"), "window");
+        assert_eq!(resolve_mode(false, true, OpenMode::Pane), OpenMode::Window);
     }
 
     #[test]
     fn test_resolve_mode_no_flags_uses_config_pane() {
-        assert_eq!(resolve_mode(false, false, "pane"), "pane");
+        assert_eq!(resolve_mode(false, false, OpenMode::Pane), OpenMode::Pane);
     }
 
     #[test]
     fn test_resolve_mode_no_flags_uses_config_window() {
-        assert_eq!(resolve_mode(false, false, "window"), "window");
-    }
-
-    #[test]
-    fn test_resolve_mode_no_flags_invalid_config_defaults_to_window() {
-        assert_eq!(resolve_mode(false, false, "invalid"), "window");
-        assert_eq!(resolve_mode(false, false, ""), "window");
+        assert_eq!(
+            resolve_mode(false, false, OpenMode::Window),
+            OpenMode::Window
+        );
     }
 
     #[test]
     fn test_resolve_mode_pane_flag_overrides_config() {
-        assert_eq!(resolve_mode(true, false, "window"), "pane");
+        assert_eq!(resolve_mode(true, false, OpenMode::Window), OpenMode::Pane);
     }
 
     #[test]
     fn test_resolve_mode_window_flag_overrides_config() {
-        assert_eq!(resolve_mode(false, true, "pane"), "window");
+        assert_eq!(resolve_mode(false, true, OpenMode::Pane), OpenMode::Window);
     }
 
     #[test]

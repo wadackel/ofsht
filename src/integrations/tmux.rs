@@ -12,6 +12,16 @@ pub trait TmuxLauncher {
     fn create_window(&self, path: &Path, branch: &str) -> Result<()>;
     /// Create a new tmux pane at the specified path
     fn create_pane(&self, path: &Path) -> Result<()>;
+    /// Split the current tmux window horizontally into a new pane at `path`.
+    ///
+    /// Used by `ofsht open --pane` for batch worktree fan-out. Failures are
+    /// surfaced via `Result` and the caller decides whether to bail or warn.
+    fn split_pane(&self, path: &Path) -> Result<()>;
+    /// Apply the `tiled` layout to the current tmux window.
+    ///
+    /// Called by `ofsht open --pane` after splitting all worktrees so that
+    /// the resulting panes are evenly distributed.
+    fn select_tiled_layout(&self) -> Result<()>;
 }
 
 /// Real tmux launcher that executes actual tmux commands
@@ -69,7 +79,10 @@ impl TmuxLauncher for RealTmuxLauncher {
     fn create_pane(&self, path: &Path) -> Result<()> {
         // Ensure we're in a tmux session
         self.detect()?;
+        self.split_pane(path)
+    }
 
+    fn split_pane(&self, path: &Path) -> Result<()> {
         let output = Command::new("tmux")
             .arg("split-window")
             .arg("-h")
@@ -81,6 +94,20 @@ impl TmuxLauncher for RealTmuxLauncher {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!("tmux split-window command failed: {}", stderr.trim());
+        }
+
+        Ok(())
+    }
+
+    fn select_tiled_layout(&self) -> Result<()> {
+        let output = Command::new("tmux")
+            .args(["select-layout", "tiled"])
+            .output()
+            .context("Failed to execute tmux select-layout command")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("tmux select-layout command failed: {}", stderr.trim());
         }
 
         Ok(())
@@ -107,8 +134,92 @@ pub fn sanitize_window_name(branch: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    /// Mock tmux launcher for testing.
+    ///
+    /// Construct with `MockTmuxLauncher::default()` and override individual
+    /// fields with struct-update syntax:
+    ///
+    /// ```ignore
+    /// MockTmuxLauncher { split_pane_should_fail: true, ..Default::default() }
+    /// ```
+    #[derive(Default)]
+    pub struct MockTmuxLauncher {
+        pub detect_should_fail: bool,
+        pub split_pane_should_fail: bool,
+        pub select_tiled_layout_should_fail: bool,
+        /// Counts how many times `select_tiled_layout` was invoked. Used by
+        /// partial-failure regression tests to assert it is only called when at
+        /// least one split succeeded.
+        pub select_tiled_layout_calls: Cell<u32>,
+    }
+
+    impl TmuxLauncher for MockTmuxLauncher {
+        fn detect(&self) -> Result<()> {
+            if self.detect_should_fail {
+                bail!("Mock tmux detect failure");
+            }
+            Ok(())
+        }
+
+        fn create_window(&self, _path: &Path, _branch: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn create_pane(&self, _path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        fn split_pane(&self, _path: &Path) -> Result<()> {
+            if self.split_pane_should_fail {
+                bail!("Mock tmux split_pane failure");
+            }
+            Ok(())
+        }
+
+        fn select_tiled_layout(&self) -> Result<()> {
+            self.select_tiled_layout_calls
+                .set(self.select_tiled_layout_calls.get() + 1);
+            if self.select_tiled_layout_should_fail {
+                bail!("Mock tmux select_tiled_layout failure");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_split_pane_success() {
+        let mock = MockTmuxLauncher::default();
+        assert!(mock.split_pane(Path::new("/tmp/x")).is_ok());
+    }
+
+    #[test]
+    fn test_split_pane_failure() {
+        let mock = MockTmuxLauncher {
+            split_pane_should_fail: true,
+            ..Default::default()
+        };
+        assert!(mock.split_pane(Path::new("/tmp/x")).is_err());
+    }
+
+    #[test]
+    fn test_select_tiled_layout_success() {
+        let mock = MockTmuxLauncher::default();
+        assert!(mock.select_tiled_layout().is_ok());
+        assert_eq!(mock.select_tiled_layout_calls.get(), 1);
+    }
+
+    #[test]
+    fn test_select_tiled_layout_failure() {
+        let mock = MockTmuxLauncher {
+            select_tiled_layout_should_fail: true,
+            ..Default::default()
+        };
+        assert!(mock.select_tiled_layout().is_err());
+    }
 
     #[test]
     fn test_sanitize_window_name_simple() {

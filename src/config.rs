@@ -10,8 +10,8 @@ pub mod template_generator;
 // Note: These are part of the public API and used in tests, even if not all are used in main.rs
 #[allow(unused_imports)]
 pub use schema::{
-    Config, FzfConfig, GhConfig, HookActions, Hooks, IntegrationsConfig, TmuxBehavior, TmuxConfig,
-    WorktreeConfig, ZoxideConfig,
+    Config, FzfConfig, GhConfig, HookActions, Hooks, IntegrationsConfig, OpenMode, TmuxBehavior,
+    TmuxConfig, WorktreeConfig, ZoxideConfig,
 };
 
 #[cfg(test)]
@@ -26,7 +26,7 @@ mod tests {
         assert!(config.hooks.delete.run.is_empty());
         assert!(config.integrations.zoxide.enabled);
         assert!(config.integrations.fzf.enabled);
-        assert_eq!(config.integrations.tmux.create, "window");
+        assert_eq!(config.integrations.tmux.create, OpenMode::Window);
     }
 
     #[test]
@@ -78,7 +78,8 @@ mod tests {
     fn test_tmux_config_default() {
         let config = TmuxConfig::default();
         assert_eq!(config.behavior, TmuxBehavior::Auto);
-        assert_eq!(config.create, "window");
+        assert_eq!(config.create, OpenMode::Window);
+        assert_eq!(config.open, OpenMode::Window);
     }
 
     #[test]
@@ -87,10 +88,12 @@ mod tests {
             [integration.tmux]
             behavior = "always"
             create = "pane"
+            open = "pane"
         "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.integrations.tmux.behavior, TmuxBehavior::Always);
-        assert_eq!(config.integrations.tmux.create, "pane");
+        assert_eq!(config.integrations.tmux.create, OpenMode::Pane);
+        assert_eq!(config.integrations.tmux.open, OpenMode::Pane);
     }
 
     #[test]
@@ -100,7 +103,39 @@ mod tests {
             behavior = "never"
         "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.integrations.tmux.create, "window");
+        assert_eq!(config.integrations.tmux.create, OpenMode::Window);
+        assert_eq!(config.integrations.tmux.open, OpenMode::Window);
+    }
+
+    #[test]
+    fn test_tmux_create_invalid_value() {
+        let toml = r#"
+            [integration.tmux]
+            create = "invalid"
+        "#;
+        let result: Result<Config, _> = toml::from_str(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tmux_open_invalid_value() {
+        let toml = r#"
+            [integration.tmux]
+            open = "invalid"
+        "#;
+        let result: Result<Config, _> = toml::from_str(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_open_mode_display() {
+        assert_eq!(format!("{}", OpenMode::Window), "window");
+        assert_eq!(format!("{}", OpenMode::Pane), "pane");
+    }
+
+    #[test]
+    fn test_open_mode_default() {
+        assert_eq!(OpenMode::default(), OpenMode::Window);
     }
 
     #[test]
@@ -175,7 +210,7 @@ mod tests {
         assert!(config.zoxide.enabled);
         assert!(config.fzf.enabled);
         assert_eq!(config.tmux.behavior, TmuxBehavior::Auto);
-        assert_eq!(config.tmux.create, "window");
+        assert_eq!(config.tmux.create, OpenMode::Window);
         assert!(config.gh.enabled);
     }
 
@@ -201,7 +236,7 @@ mod tests {
         assert!(config.integrations.fzf.enabled);
         assert_eq!(config.integrations.fzf.options, vec!["--height=100%"]);
         assert_eq!(config.integrations.tmux.behavior, TmuxBehavior::Always);
-        assert_eq!(config.integrations.tmux.create, "pane");
+        assert_eq!(config.integrations.tmux.create, OpenMode::Pane);
         assert!(config.integrations.gh.enabled);
     }
 
