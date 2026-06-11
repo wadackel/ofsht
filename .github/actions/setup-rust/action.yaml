@@ -20,17 +20,21 @@ runs:
   steps:
     - name: Setup Rust toolchain
       shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
       run: |
         set -euo pipefail
 
         # Update and set default toolchain
-        rustup update ${{ inputs.toolchain }} --no-self-update
-        rustup default ${{ inputs.toolchain }}
+        rustup update "$TOOLCHAIN" --no-self-update
+        rustup default "$TOOLCHAIN"
 
         # Add components if specified
-        if [[ -n "${{ inputs.components }}" ]]; then
-          IFS=',' read -ra COMPONENTS <<< "${{ inputs.components }}"
-          for component in "${COMPONENTS[@]}"; do
+        if [[ -n "$COMPONENTS" ]]; then
+          IFS=',' read -ra components <<< "$COMPONENTS"
+          for component in "${components[@]}"; do
             component=$(echo "$component" | xargs)  # Trim whitespace
             echo "Adding component: $component"
             rustup component add "$component"
@@ -38,9 +42,9 @@ runs:
         fi
 
         # Add targets if specified
-        if [[ -n "${{ inputs.targets }}" ]]; then
-          IFS=',' read -ra TARGETS <<< "${{ inputs.targets }}"
-          for target in "${TARGETS[@]}"; do
+        if [[ -n "$TARGETS" ]]; then
+          IFS=',' read -ra targets <<< "$TARGETS"
+          for target in "${targets[@]}"; do
             target=$(echo "$target" | xargs)  # Trim whitespace
             echo "Adding target: $target"
             rustup target add "$target"
