@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-19
+
+### CI/CD
+
+- Fix zizmor findings and add zizmor check to CI ([#114](https://github.com/wadackel/ofsht/pull/114))
+
+
+### Documentation
+
+- Drop the CLAUDE.md symlink in favor of AGENTS.md ([#115](https://github.com/wadackel/ofsht/pull/115))
+
+
 ## [0.8.0] - 2026-05-05
 
 ### Build
