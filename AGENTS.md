@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
 
 > **Note**: For general development information, setup instructions, and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md). This file contains Claude Code-specific guidance and detailed architecture information.
 
@@ -463,7 +463,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 - All commit messages must be in English
 - Use clear, concise technical writing matching this document's style
 
-### Claude Code Interactions
+### Agent Interactions
 - Match the user's language in conversations
 - If user writes in Japanese, respond in Japanese
 - If user writes in English, respond in English
