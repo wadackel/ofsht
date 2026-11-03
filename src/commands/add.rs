@@ -5,6 +5,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
 use crate::color;
+use crate::commands::common::current_worktree_toplevel;
 use crate::commands::context::CommandContext;
 use crate::config;
 use crate::hooks;
@@ -17,7 +18,7 @@ use crate::service::{CreateWorktreeRequest, WorktreeService};
 
 /// Process a PR and return branch name and start point
 fn process_pr(
-    git: &RealGitClient,
+    git: &impl GitClient,
     pr: &integrations::gh::PrInfo,
     number: u32,
     repo_root: &std::path::Path,
@@ -33,6 +34,11 @@ fn process_pr(
             Some(repo_root),
         )
         .map_err(|e| anyhow::anyhow!("git fetch PR ref failed: {e}"))?;
+        // FETCH_HEAD belongs to the main worktree, and `git worktree add` runs in the current one
+        let fetched = git
+            .rev_parse(&["rev-parse", "--verify", "FETCH_HEAD"], Some(repo_root))?
+            .trim()
+            .to_string();
 
         // Check if local branch with PR's name already exists
         let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root))?;
@@ -61,10 +67,10 @@ fn process_pr(
                 )
             );
 
-            Ok((unique_branch, Some("FETCH_HEAD".to_string())))
+            Ok((unique_branch, Some(fetched)))
         } else {
             // Use PR's original branch name
-            Ok((pr.head_ref_name.clone(), Some("FETCH_HEAD".to_string())))
+            Ok((pr.head_ref_name.clone(), Some(fetched)))
         }
     } else {
         // Same repository - fetch the branch
@@ -249,10 +255,12 @@ pub fn cmd_new(
 
     let service = WorktreeService::new(RealGitClient, RealZoxideClient);
     let hook_actions = &ctx.config.hooks.create;
+    let current_worktree = current_worktree_toplevel();
     let req = CreateWorktreeRequest {
         branch,
         start_point,
         repo_root: &ctx.repo_root,
+        current_worktree: current_worktree.as_deref(),
         path_template: &ctx.config.worktree.dir,
         zoxide_enabled,
     };
@@ -322,6 +330,35 @@ pub fn cmd_new(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_process_pr_fork_starts_from_fetched_sha() {
+        let git = crate::integrations::git::tests::MockGitClient {
+            rev_parse_output: "0123456789abcdef0123456789abcdef01234567\n".to_string(),
+            ..Default::default()
+        };
+        let pr = integrations::gh::PrInfo {
+            number: 7,
+            title: "fix".to_string(),
+            head_ref_name: "fix-typo".to_string(),
+            is_cross_repository: true,
+        };
+
+        let (branch, start) = process_pr(
+            &git,
+            &pr,
+            7,
+            std::path::Path::new("/repo"),
+            color::ColorMode::Never,
+        )
+        .unwrap();
+
+        assert_eq!(branch, "fix-typo");
+        assert_eq!(
+            start.as_deref(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+    }
 
     #[test]
     fn test_should_use_tmux_no_tmux_flag_priority() {

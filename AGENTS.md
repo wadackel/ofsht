@@ -349,7 +349,7 @@ Uses `clap_complete` crate for runtime generation via the `completions` subcomma
 The `add` command accepts an optional `start_point` argument:
 - Syntax: `ofsht add <branch> [start-point]`
 - Start point can be: branch name, tag, commit hash, or relative commit (e.g., `HEAD~3`)
-- If omitted, defaults to current HEAD
+- If omitted, defaults to the HEAD of the worktree the command runs in; relative start points such as `HEAD~3` are read in that worktree too
 - Examples:
   - `ofsht add feature` → creates from HEAD
   - `ofsht add feature develop` → creates from develop branch

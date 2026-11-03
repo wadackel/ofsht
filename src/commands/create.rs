@@ -5,6 +5,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
 use crate::color;
+use crate::commands::common::current_worktree_toplevel;
 use crate::commands::context::CommandContext;
 use crate::hooks;
 use crate::integrations::git::RealGitClient;
@@ -61,10 +62,12 @@ pub fn cmd_create(
     let service = WorktreeService::new(RealGitClient, RealZoxideClient);
 
     let hook_actions = &ctx.config.hooks.create;
+    let current_worktree = current_worktree_toplevel();
     let req = CreateWorktreeRequest {
         branch,
         start_point,
         repo_root: &ctx.repo_root,
+        current_worktree: current_worktree.as_deref(),
         path_template: &ctx.config.worktree.dir,
         zoxide_enabled,
     };
