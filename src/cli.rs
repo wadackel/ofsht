@@ -228,11 +228,11 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
 
     let list = crate::domain::worktree::WorktreeList::parse(&stdout, None);
 
-    // Branch names stay offered when the config cannot be read, so the root is optional
+    // An unreadable config falls back to the defaults, as `cd` does, so both agree on the root
     let root = crate::commands::common::get_main_repo_root()
         .ok()
         .and_then(|repo_root| {
-            let config = crate::config::Config::load_from_repo_root(&repo_root).ok()?;
+            let config = crate::config::Config::load_from_repo_root(&repo_root).unwrap_or_default();
             crate::domain::worktree::worktree_root_from_template(&config.worktree.dir, &repo_root)
         });
 

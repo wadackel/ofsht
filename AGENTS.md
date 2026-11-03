@@ -230,7 +230,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 **Key Shared Functions** (in `commands/common.rs`):
 - `get_main_repo_root()`: Find main repo using `git rev-parse --git-common-dir`
 - `resolve_worktree_target()`: Resolve a removal target (`.`, branch name, worktree name, or path) to a canonical worktree path
-- `ambiguous_name_error()`: Error listing the worktrees that share a directory name
+- `ambiguous_name_error()`: Error listing the worktrees a name matches, with their branches
 - `parse_all_worktrees()`: Parse `git worktree list --porcelain` output
 - `find_worktree_by_branch()`: Locate worktree path by branch name
 

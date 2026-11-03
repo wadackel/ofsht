@@ -44,7 +44,7 @@ Run `ofsht --help` or `ofsht <command> --help` when command details are uncertai
   ofsht cd feature-branch
   ofsht cd main
   ```
-  `cd` and `rm` accept a branch name, the name shown by `ofsht ls`, or a path. `ofsht cd main` and `ofsht cd @` print the main worktree; `rm` refuses both. A directory name shared by several worktrees outside `worktree.dir` fails with `Ambiguous worktree name`; use the branch name or a path instead.
+  `cd` and `rm` accept a branch name, the name shown by `ofsht ls`, or a path. `ofsht cd main`, `ofsht cd @`, and a path to the main worktree print the main worktree; `rm` refuses all three. A name that matches several worktrees, by branch or by directory name, fails with `Ambiguous worktree name`; use the path it lists instead.
 - Remove explicit worktrees:
   ```bash
   ofsht rm feature-branch

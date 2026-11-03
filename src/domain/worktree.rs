@@ -30,7 +30,7 @@ fn is_path_active(worktree_path: &str, canonical_active: Option<&std::path::Path
 #[derive(Debug, PartialEq, Eq)]
 pub enum NameResolution<'a> {
     Found(&'a WorktreeEntry),
-    /// Several worktrees outside the root share the directory name
+    /// The name matches several worktrees by branch or directory name
     Ambiguous(Vec<&'a WorktreeEntry>),
     NotFound,
 }
