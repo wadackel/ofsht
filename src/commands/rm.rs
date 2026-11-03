@@ -8,12 +8,12 @@ use std::time::Duration;
 use crate::color;
 use crate::commands::common::{current_worktree_toplevel, resolve_worktree_target};
 use crate::commands::context::CommandContext;
-use crate::domain::worktree::{branch_from_template, WorktreeList};
+use crate::domain::worktree::{branch_from_template, locked_paths, WorktreeList};
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
 use crate::integrations::git::GitClient;
-use crate::path_utils::display_path;
+use crate::path_utils::{canonicalize_allow_missing, display_path};
 
 /// How `ofsht rm` treats the branch of a removed worktree
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,26 +26,28 @@ pub enum BranchDeletion {
     Force,
 }
 
-/// How `rm` treats branches, resolved once for every target
-struct BranchPolicy {
+/// How `rm` treats worktrees and their branches, resolved once for every target
+struct RemovalPolicy {
     deletion: BranchDeletion,
+    /// `git worktree remove --force`: discard modified and untracked files and submodules
+    force_worktree: bool,
     /// Never deleted, even with `--force-branch`: losing unpushed work on them costs the most
     default_branches: Vec<String>,
 }
 
-impl BranchPolicy {
+impl RemovalPolicy {
     fn is_default(&self, branch: &str) -> bool {
         self.default_branches.iter().any(|name| name == branch)
     }
 }
 
-/// Remove a worktree, then handle its branch according to `branch_policy`
+/// Remove a worktree, then handle its branch according to `policy`
 fn remove_worktree_internal(
     ctx: &CommandContext,
     worktree_path: &std::path::Path,
     branch_name: Option<&str>,
     label: &str,
-    branch_policy: &BranchPolicy,
+    policy: &RemovalPolicy,
     mp: &MultiProgress,
 ) -> Result<()> {
     let git = &ctx.git;
@@ -66,8 +68,8 @@ fn remove_worktree_internal(
         pb.enable_steady_tick(Duration::from_millis(100));
         Some(pb)
     } else {
-        // non-TTY: print header before hooks (sync pattern)
-        eprintln!("{}", color::success(color_mode, format!("Removed {label}")));
+        // non-TTY: the hooks' lines nest under this header, and `Removed` follows only success
+        eprintln!("Removing {label}");
         None
     };
 
@@ -88,7 +90,7 @@ fn remove_worktree_internal(
     }
 
     // Remove worktree using git worktree remove
-    if let Err(e) = git.remove_worktree(worktree_path, Some(repo_root)) {
+    if let Err(e) = git.remove_worktree(worktree_path, policy.force_worktree, Some(repo_root)) {
         // Clear header spinner on error
         if let Some(pb) = header_pb {
             pb.finish_and_clear();
@@ -97,15 +99,15 @@ fn remove_worktree_internal(
     }
 
     // Finish header: Removing → Removed
+    let removed = format!("{}", color::success(color_mode, format!("Removed {label}")));
     if let Some(pb) = header_pb {
         pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
-        pb.finish_with_message(format!(
-            "{}",
-            color::success(color_mode, format!("Removed {label}"))
-        ));
+        pb.finish_with_message(removed);
+    } else {
+        eprintln!("{removed}");
     }
 
-    let force = match branch_policy.deletion {
+    let force_branch = match policy.deletion {
         BranchDeletion::Keep => return Ok(()),
         BranchDeletion::Safe => false,
         BranchDeletion::Force => true,
@@ -129,14 +131,14 @@ fn remove_worktree_internal(
     };
 
     if let Some(branch) = branch_name {
-        if branch_policy.is_default(branch) {
+        if policy.is_default(branch) {
             kept(format!("Kept branch: {branch} (default branch)"));
         } else if git
-            .remove_branch(branch, force, Some(repo_root))
+            .remove_branch(branch, force_branch, Some(repo_root))
             .unwrap_or(false)
         {
             deleted(branch);
-        } else if !force {
+        } else if !force_branch {
             kept(format!(
                 "Kept branch: {branch} (not fully merged; use --force-branch to delete)"
             ));
@@ -146,7 +148,7 @@ fn remove_worktree_internal(
     // The branch the worktree was created with; only a merged one goes, and a failure stays
     // quiet because the name may belong to a branch that is unmerged or in use elsewhere
     let creation_branch = branch_from_template(&config.worktree.dir, repo_root, worktree_path)
-        .filter(|name| branch_name != Some(name.as_str()) && !branch_policy.is_default(name));
+        .filter(|name| branch_name != Some(name.as_str()) && !policy.is_default(name));
     if let Some(name) = creation_branch {
         if git
             .remove_branch(&name, false, Some(repo_root))
@@ -157,6 +159,75 @@ fn remove_worktree_internal(
     }
 
     Ok(())
+}
+
+/// Why git would refuse to remove each of `paths`, checked before any hook runs
+///
+/// The lock applies even with `force`, as `git worktree remove` needs `--force` twice for it.
+/// A target that cannot be checked is refused, so nothing is removed on a guess.
+fn preflight(
+    git: &impl GitClient,
+    paths: &[&std::path::Path],
+    list_stdout: &str,
+    force: bool,
+) -> Vec<(std::path::PathBuf, String)> {
+    let locked: Vec<std::path::PathBuf> = locked_paths(list_stdout)
+        .iter()
+        .map(|path| canonicalize_allow_missing(std::path::Path::new(path)))
+        .collect();
+    let mut refused = Vec::new();
+    for path in paths {
+        if locked.contains(&canonicalize_allow_missing(path)) {
+            refused.push((
+                path.to_path_buf(),
+                format!("locked (run git worktree unlock {} first)", path.display()),
+            ));
+            continue;
+        }
+        if force || !path.exists() {
+            continue;
+        }
+        let checks = git
+            .run(
+                &["status", "--porcelain", "--ignore-submodules=none"],
+                Some(path),
+            )
+            .and_then(|status| {
+                let files = git.run(&["ls-files", "-s", "-z"], Some(path))?;
+                let modules = git.run(&["rev-parse", "--git-path", "modules"], Some(path))?;
+                Ok((status, files, path.join(modules.trim())))
+            });
+        match checks {
+            Err(e) => refused.push((
+                path.to_path_buf(),
+                format!("cannot check: {}", e.to_string().trim_end()),
+            )),
+            Ok((status, files, modules)) => {
+                if !status.trim().is_empty() {
+                    refused.push((
+                        path.to_path_buf(),
+                        "has modified or untracked files (use --force to discard them)".to_string(),
+                    ));
+                }
+                // Same rules as git: the worktree's modules directory (kept after a deinit), or a
+                // gitlink whose directory holds a .git
+                let initialized = modules.is_dir()
+                    || files.split('\0').any(|entry| {
+                        entry.starts_with("160000 ")
+                            && entry
+                                .split_once('\t')
+                                .is_some_and(|(_, name)| path.join(name).join(".git").exists())
+                    });
+                if initialized {
+                    refused.push((
+                        path.to_path_buf(),
+                        "contains initialized submodules (use --force)".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    refused
 }
 
 /// Remove one or multiple worktrees
@@ -171,6 +242,7 @@ fn remove_worktree_internal(
 pub fn cmd_rm_many(
     targets: &[String],
     branch_deletion: BranchDeletion,
+    force: bool,
     color_mode: color::ColorMode,
 ) -> Result<()> {
     // Resolve repo_root, config, and git client once for the whole removal flow.
@@ -180,8 +252,9 @@ pub fn cmd_rm_many(
     let list_stdout = ctx.worktree_list_stdout()?;
     let root = ctx.worktree_root();
     let current = current_worktree_toplevel();
-    let branch_policy = BranchPolicy {
+    let policy = RemovalPolicy {
         deletion: branch_deletion,
+        force_worktree: force,
         default_branches: ctx.git.default_branches(Some(&ctx.repo_root)),
     };
 
@@ -283,6 +356,28 @@ pub fn cmd_rm_many(
         }
     }
 
+    let paths: Vec<&std::path::Path> = non_current_removals
+        .iter()
+        .chain(current_removal.iter())
+        .map(|(_, path, _)| path.as_path())
+        .collect();
+    let refused = preflight(&ctx.git, &paths, &list_stdout, force);
+    if !refused.is_empty() {
+        let lines: Vec<String> = refused
+            .iter()
+            .map(|(path, reason)| format!("  {}: {reason}", display_path(path)))
+            .collect();
+        anyhow::bail!(
+            "Cannot remove {} worktree(s):\n{}",
+            refused
+                .iter()
+                .map(|(path, _)| path)
+                .collect::<HashSet<_>>()
+                .len(),
+            lines.join("\n")
+        );
+    }
+
     // Execute removals: non-current first, then current (if present)
     for (_, worktree_path, branch_name) in &non_current_removals {
         let path_label = display_path(worktree_path);
@@ -292,7 +387,7 @@ pub fn cmd_rm_many(
             worktree_path,
             branch_name.as_deref(),
             label,
-            &branch_policy,
+            &policy,
             &mp,
         )?;
     }
@@ -306,7 +401,7 @@ pub fn cmd_rm_many(
             worktree_path,
             branch_name.as_deref(),
             label,
-            &branch_policy,
+            &policy,
             &mp,
         )?;
 

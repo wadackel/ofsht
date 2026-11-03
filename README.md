@@ -251,7 +251,13 @@ ofsht rm --keep-branch feature-awesome
 
 # Delete the branch even if it has unmerged commits
 ofsht rm --force-branch feature-awesome
+
+# Remove a worktree with modified or untracked files or initialized submodules
+ofsht rm --force feature-awesome
 ```
+
+> [!NOTE]
+> Before running any delete hook, `ofsht rm` checks every target for what `git worktree remove` would refuse: a locked worktree, modified or untracked files, and initialized submodules. If any target would be refused, nothing is removed and every refused target is listed. `--force` lets modified files and submodules go, as `git worktree remove --force` does; it does not imply `--force-branch`. A locked worktree is refused even with `--force`; run `git worktree unlock` first. Because the check runs before the delete hooks, a worktree that a hook would have cleaned up needs `--force`.
 
 > [!NOTE]
 > By default, `ofsht rm` deletes the worktree's branch with `git branch -d`, so a branch with unmerged commits is kept and a warning is printed. Git checks whether the branch is merged into its upstream when one is set, and into the HEAD of the main worktree otherwise. Branches merged through a GitHub squash or rebase merge look unmerged to Git; delete them with `--force-branch`.
