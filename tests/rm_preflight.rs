@@ -269,3 +269,139 @@ fn force_does_not_unlock() {
     );
     assert!(slot_1.exists());
 }
+
+#[test]
+fn detached_commit_unreachable_from_refs_is_refused() {
+    let fixture = Fixture::new("");
+    let slot_1 = fixture.create("slot-1");
+    git(&slot_1, &["switch", "-q", "--detach"]);
+    git(
+        &slot_1,
+        &["commit", "-q", "--allow-empty", "-m", "important work"],
+    );
+
+    let refused = fixture.ofsht(&["--color=never", "rm", "slot-1"]);
+    assert!(!refused.status.success());
+    assert!(
+        stderr(&refused).contains("has commits on a detached HEAD that no branch or tag contains"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(slot_1.exists());
+
+    let forced = fixture.ofsht(&["--color=never", "rm", "--force", "slot-1"]);
+    assert!(forced.status.success(), "{}", stderr(&forced));
+    assert!(!slot_1.exists());
+}
+
+#[test]
+fn detached_head_reachable_from_a_ref_is_allowed() {
+    let fixture = Fixture::new("");
+    let slot_1 = fixture.create("slot-1");
+    git(&slot_1, &["switch", "-q", "--detach", "main"]);
+
+    let output = fixture.ofsht(&["--color=never", "rm", "slot-1"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!slot_1.exists());
+}
+
+#[test]
+fn paused_rebase_is_refused() {
+    let fixture = Fixture::new("");
+    let slot_1 = fixture.create("slot-1");
+    std::fs::write(slot_1.join("f"), "1").unwrap();
+    git(&slot_1, &["add", "f"]);
+    git(&slot_1, &["commit", "-q", "-m", "one"]);
+    std::fs::write(slot_1.join("f"), "2").unwrap();
+    git(&slot_1, &["commit", "-q", "-am", "two"]);
+    let status = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_SEQUENCE_EDITOR", "sed -i.bak s/^pick/edit/")
+        .args(["rebase", "-q", "-i", "HEAD~1"])
+        .current_dir(&slot_1)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = fixture.ofsht(&["--color=never", "rm", "slot-1"]);
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("rebase in progress"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(slot_1.exists());
+}
+
+#[test]
+fn merge_in_progress_is_refused() {
+    let fixture = Fixture::new("");
+    let slot_1 = fixture.create("slot-1");
+    std::fs::write(slot_1.join("f"), "base").unwrap();
+    git(&slot_1, &["add", "f"]);
+    git(&slot_1, &["commit", "-q", "-m", "base"]);
+    git(&slot_1, &["switch", "-q", "-c", "other"]);
+    std::fs::write(slot_1.join("f"), "other").unwrap();
+    git(&slot_1, &["commit", "-q", "-am", "other"]);
+    git(&slot_1, &["switch", "-q", "slot-1"]);
+    std::fs::write(slot_1.join("f"), "mine").unwrap();
+    git(&slot_1, &["commit", "-q", "-am", "mine"]);
+    let _ = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["merge", "-q", "other"])
+        .current_dir(&slot_1)
+        .output()
+        .unwrap();
+
+    let output = fixture.ofsht(&["--color=never", "rm", "slot-1"]);
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("merge in progress"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(slot_1.exists());
+}
+
+#[test]
+fn paused_multi_commit_cherry_pick_is_refused() {
+    let fixture = Fixture::new("");
+    let slot_1 = fixture.create("slot-1");
+    std::fs::write(slot_1.join("f"), "base").unwrap();
+    git(&slot_1, &["add", "f"]);
+    git(&slot_1, &["commit", "-q", "-m", "base"]);
+    git(&slot_1, &["switch", "-q", "-c", "picks"]);
+    std::fs::write(slot_1.join("f"), "pick one").unwrap();
+    git(&slot_1, &["commit", "-q", "-am", "pick one"]);
+    std::fs::write(slot_1.join("g"), "pick two").unwrap();
+    git(&slot_1, &["add", "g"]);
+    git(&slot_1, &["commit", "-q", "-m", "pick two"]);
+    git(&slot_1, &["switch", "-q", "slot-1"]);
+    std::fs::write(slot_1.join("f"), "conflict").unwrap();
+    git(&slot_1, &["commit", "-q", "-am", "conflict"]);
+    let _ = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["cherry-pick", "picks~1", "picks"])
+        .current_dir(&slot_1)
+        .output()
+        .unwrap();
+    // Resolve the first pick and commit it; the sequencer still holds the second
+    std::fs::write(slot_1.join("f"), "resolved").unwrap();
+    git(&slot_1, &["add", "f"]);
+    git(
+        &slot_1,
+        &["-c", "core.editor=true", "commit", "-q", "--no-edit"],
+    );
+
+    let output = fixture.ofsht(&["--color=never", "rm", "slot-1"]);
+    assert!(!output.status.success(), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("in progress"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(slot_1.exists());
+}

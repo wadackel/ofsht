@@ -276,6 +276,22 @@ pub fn locked_paths(porcelain: &str) -> Vec<String> {
         .collect()
 }
 
+/// Path and full HEAD of each worktree that `git worktree list --porcelain` reports as detached
+#[must_use]
+pub fn detached_heads(porcelain: &str) -> Vec<(String, String)> {
+    porcelain
+        .split("\n\n")
+        .filter(|block| block.lines().any(|line| line == "detached"))
+        .filter_map(|block| {
+            let path = block
+                .lines()
+                .find_map(|line| line.strip_prefix("worktree "))?;
+            let head = block.lines().find_map(|line| line.strip_prefix("HEAD "))?;
+            Some((path.to_string(), head.to_string()))
+        })
+        .collect()
+}
+
 /// The path `worktree.dir` gives a worktree for `branch`
 ///
 /// `{repo}` is the repository root's directory name; a relative result is resolved from the
@@ -847,6 +863,18 @@ mod tests {
         let porcelain = "worktree /repo\nHEAD a\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD b\nbranch refs/heads/a\nlocked\n\nworktree /wt-b\nHEAD c\ndetached\nlocked on a usb disk\n\nworktree /wt-c\nHEAD d\nbranch refs/heads/c\n\n";
         assert_eq!(locked_paths(porcelain), ["/wt-a", "/wt-b"]);
         assert!(locked_paths("worktree /repo\nHEAD a\nbranch refs/heads/main\n").is_empty());
+    }
+
+    #[test]
+    fn test_detached_heads_returns_path_and_full_sha() {
+        let porcelain = "worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD 0123456789abcdef0123456789abcdef01234567\ndetached\n\nworktree /wt-b\nHEAD bbb\nbranch refs/heads/b\n\n";
+        assert_eq!(
+            detached_heads(porcelain),
+            [(
+                "/wt-a".to_string(),
+                "0123456789abcdef0123456789abcdef01234567".to_string()
+            )]
+        );
     }
 
     #[test]
