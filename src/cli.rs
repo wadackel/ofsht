@@ -68,8 +68,9 @@ pub enum Commands {
         /// default branches are always kept
         #[arg(long, conflicts_with = "keep_branch")]
         force_branch: bool,
-        /// Remove worktrees with modified or untracked files or initialized submodules
-        /// (`git worktree remove --force`); locked worktrees are still refused
+        /// Remove worktrees with modified or untracked files, initialized submodules, commits
+        /// only a detached HEAD reaches, or an operation in progress; locked worktrees are
+        /// still refused
         #[arg(long)]
         force: bool,
     },

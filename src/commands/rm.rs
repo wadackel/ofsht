@@ -234,10 +234,10 @@ fn preflight(
                         "contains initialized submodules (use --force)".to_string(),
                     ));
                 }
+                for reason in unrecoverable_work(git, path, &detached, repo_root) {
+                    refused.push((path.to_path_buf(), reason));
+                }
             }
-        }
-        for reason in unrecoverable_work(git, path, &detached, repo_root) {
-            refused.push((path.to_path_buf(), reason));
         }
     }
     refused

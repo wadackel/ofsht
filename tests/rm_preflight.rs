@@ -391,10 +391,7 @@ fn paused_multi_commit_cherry_pick_is_refused() {
     // Resolve the first pick and commit it; the sequencer still holds the second
     std::fs::write(slot_1.join("f"), "resolved").unwrap();
     git(&slot_1, &["add", "f"]);
-    git(
-        &slot_1,
-        &["-c", "core.editor=true", "commit", "-q", "--no-edit"],
-    );
+    git(&slot_1, &["commit", "-q", "--no-edit"]);
 
     let output = fixture.ofsht(&["--color=never", "rm", "slot-1"]);
     assert!(!output.status.success(), "{}", stderr(&output));
