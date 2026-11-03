@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::domain::worktree::{
-    expand_worktree_path, locked_paths, worktree_root_from_template, WorktreeList,
+    expand_worktree_path, locked_paths, nesting, worktree_root_from_template, Nesting, WorktreeList,
 };
 use crate::integrations::git::{GitClient, RemoteTracking};
 use crate::integrations::zoxide::ZoxideClient;
@@ -61,12 +61,14 @@ where
         let worktree_path = expand_worktree_path(req.path_template, req.repo_root, req.branch)
             .context("Failed to get repository name")?;
 
+        let porcelain = self.git_client.list_worktrees(Some(req.repo_root))?;
+        let list = WorktreeList::parse(&porcelain, None);
         if req.start_point.is_none() {
             if self
                 .git_client
                 .branch_exists(req.branch, Some(req.repo_root))?
             {
-                self.refuse_branch_in_use(req)?;
+                refuse_branch_in_use(req, &porcelain, &list)?;
             } else {
                 match self.git_client.remote_tracking(req.branch, Some(req.repo_root)) {
                     Some(RemoteTracking::Branch(branch)) => anyhow::bail!(
@@ -81,6 +83,7 @@ where
                 }
             }
         }
+        refuse_nesting(req, &worktree_path, &list)?;
 
         self.git_client.create_worktree(
             req.branch,
@@ -97,47 +100,76 @@ where
 
         Ok(worktree_path)
     }
+}
 
-    /// Fail before `git worktree add` when another worktree has `req.branch` checked out,
-    /// naming that worktree and what to run instead
-    fn refuse_branch_in_use(&self, req: &CreateWorktreeRequest<'_>) -> Result<()> {
-        let porcelain = self.git_client.list_worktrees(Some(req.repo_root))?;
-        let list = WorktreeList::parse(&porcelain, None);
-        let Some(entry) = list
-            .entries()
+/// Fail before `git worktree add` when another worktree has `req.branch` checked out,
+/// naming that worktree and what to run instead
+fn refuse_branch_in_use(
+    req: &CreateWorktreeRequest<'_>,
+    porcelain: &str,
+    list: &WorktreeList,
+) -> Result<()> {
+    let Some(entry) = list
+        .entries()
+        .iter()
+        .find(|entry| entry.branch.as_deref() == Some(req.branch))
+    else {
+        return Ok(());
+    };
+    let path = Path::new(&entry.path);
+    if !path.exists() {
+        let canonical = canonicalize_allow_missing(path);
+        let locked = locked_paths(porcelain)
             .iter()
-            .find(|entry| entry.branch.as_deref() == Some(req.branch))
-        else {
-            return Ok(());
-        };
-        let path = Path::new(&entry.path);
-        if !path.exists() {
-            let canonical = canonicalize_allow_missing(path);
-            let locked = locked_paths(&porcelain)
-                .iter()
-                .any(|locked| canonicalize_allow_missing(Path::new(locked)) == canonical);
-            let fix = if locked {
-                format!(
-                    "git worktree unlock {}, then git worktree prune",
-                    entry.path
-                )
-            } else {
-                "git worktree prune".to_string()
-            };
-            anyhow::bail!(
-                "Branch {} is checked out in a missing worktree at {}. Run: {fix}",
-                req.branch,
+            .any(|locked| canonicalize_allow_missing(Path::new(locked)) == canonical);
+        let fix = if locked {
+            format!(
+                "git worktree unlock {}, then git worktree prune",
                 entry.path
-            );
-        }
-        let root = worktree_root_from_template(req.path_template, req.repo_root);
+            )
+        } else {
+            "git worktree prune".to_string()
+        };
         anyhow::bail!(
-            "Branch {} is already checked out in {}. Use: ofsht cd {}",
+            "Branch {} is checked out in a missing worktree at {}. Run: {fix}",
             req.branch,
-            list.display_name(entry, root.as_deref()),
-            list.cd_name(entry, root.as_deref())
+            entry.path
         );
     }
+    let root = worktree_root_from_template(req.path_template, req.repo_root);
+    anyhow::bail!(
+        "Branch {} is already checked out in {}. Use: ofsht cd {}",
+        req.branch,
+        list.display_name(entry, root.as_deref()),
+        list.cd_name(entry, root.as_deref())
+    );
+}
+
+/// Fail before `git worktree add` when `path` is inside, contains, or is an existing worktree
+/// other than the main one, whose directory still exists
+///
+/// Git creates the new branch before it refuses a non-empty directory, so the containing and
+/// same-path cases would leave that branch behind.
+fn refuse_nesting(req: &CreateWorktreeRequest<'_>, path: &Path, list: &WorktreeList) -> Result<()> {
+    let clash = list
+        .non_main()
+        .iter()
+        .filter(|entry| Path::new(&entry.path).exists())
+        .find_map(|entry| nesting(path, Path::new(&entry.path)).map(|kind| (kind, entry)));
+    let Some((kind, entry)) = clash else {
+        return Ok(());
+    };
+    let relation = match kind {
+        Nesting::Inside => "is inside",
+        Nesting::Contains => "contains",
+        Nesting::Same => "is already",
+    };
+    let root = worktree_root_from_template(req.path_template, req.repo_root);
+    anyhow::bail!(
+        "Cannot create {}: it {relation} the worktree {}",
+        path.display(),
+        list.display_name(entry, root.as_deref())
+    );
 }
 
 #[cfg(test)]

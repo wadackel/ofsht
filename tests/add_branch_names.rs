@@ -267,3 +267,106 @@ fn add_branch_in_locked_missing_worktree_suggests_unlock() {
     assert!(stderr.contains("Run: git worktree unlock"), "{stderr}");
     assert!(stderr.contains("then git worktree prune"), "{stderr}");
 }
+
+/// `slot-1` moved to another branch, with the branch `slot-1` deleted: the pool state in #131
+fn create_slot_without_its_branch(fixture: &Fixture, name: &str) -> PathBuf {
+    assert_success(&fixture.ofsht(&["create", name]));
+    let path = git_output(&fixture.repo, &["worktree", "list", "--porcelain"])
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .find(|path| path.ends_with(name))
+        .unwrap();
+    git(
+        &path,
+        &[
+            "switch",
+            "-q",
+            "-c",
+            &format!("moved-{}", name.replace('/', "-")),
+        ],
+    );
+    git(&fixture.repo, &["branch", "-q", "-D", name]);
+    path
+}
+
+fn branch_exists(fixture: &Fixture, name: &str) -> bool {
+    !git_output(&fixture.repo, &["branch", "--list", name]).is_empty()
+}
+
+#[test]
+fn create_inside_existing_worktree_is_refused() {
+    let fixture = Fixture::new();
+    create_slot_without_its_branch(&fixture, "slot-1");
+
+    for command in ["create", "add"] {
+        let output = fixture.ofsht(&[command, "slot-1/foo"]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{stderr}");
+        assert!(stderr.contains("inside the worktree slot-1"), "{stderr}");
+    }
+    assert!(!fixture.worktree("slot-1/foo").exists());
+    assert!(!branch_exists(&fixture, "slot-1/foo"));
+}
+
+#[test]
+fn add_containing_existing_worktree_is_refused() {
+    let fixture = Fixture::new();
+    create_slot_without_its_branch(&fixture, "a/b");
+
+    let output = fixture.ofsht(&["add", "a"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("contains the worktree a/b"), "{stderr}");
+    assert!(!branch_exists(&fixture, "a"));
+}
+
+#[test]
+fn add_at_existing_worktree_path_is_refused() {
+    let fixture = Fixture::new();
+    create_slot_without_its_branch(&fixture, "slot-1");
+
+    let output = fixture.ofsht(&["add", "slot-1"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("is already the worktree slot-1"),
+        "{stderr}"
+    );
+    assert!(!branch_exists(&fixture, "slot-1"));
+}
+
+const IN_REPO_CONFIG: &str = "[worktree]\ndir = \".worktrees/{branch}\"\n";
+
+#[test]
+fn worktree_dir_inside_main_still_refuses_nesting() {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join(".ofsht.toml"), IN_REPO_CONFIG).unwrap();
+    create_slot_without_its_branch(&fixture, "slot-1");
+
+    let output = fixture.ofsht(&["add", "slot-1/foo"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("inside the worktree"), "{stderr}");
+    assert!(!fixture.repo.join(".worktrees/slot-1/foo").exists());
+}
+
+#[test]
+fn worktree_dir_inside_main_is_allowed() {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join(".ofsht.toml"), IN_REPO_CONFIG).unwrap();
+
+    assert_success(&fixture.ofsht(&["add", "foo"]));
+    assert!(fixture.repo.join(".worktrees/foo").exists());
+}
+
+#[test]
+fn add_inside_missing_worktree_is_not_nesting() {
+    let fixture = Fixture::new();
+    let slot_1 = create_slot_without_its_branch(&fixture, "slot-1");
+    std::fs::remove_dir_all(&slot_1).unwrap();
+
+    let output = fixture.ofsht(&["add", "slot-1/foo"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("Cannot create"), "{stderr}");
+}
