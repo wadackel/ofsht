@@ -285,6 +285,7 @@ options = ["--height=50%", "--border"]  # Additional fzf command-line options
 behavior = "auto"   # "auto" (flag-based, default), "always", "never"
 create = "window"   # "window" (default), "pane"
 open = "window"     # Default mode for `ofsht open`: "window" or "pane"
+close_on_rm = false
 
 [integration.gh]
 enabled = true  # Default: true (only available in global config)

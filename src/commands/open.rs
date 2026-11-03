@@ -8,7 +8,7 @@ use crate::commands::context::CommandContext;
 use crate::config::OpenMode;
 use crate::domain::worktree::WorktreeList;
 use crate::integrations::git::{GitClient, RealGitClient};
-use crate::integrations::tmux::{RealTmuxLauncher, TmuxLauncher};
+use crate::integrations::tmux::{owning_worktree, Session, TmuxLauncher};
 use crate::path_utils::canonicalize_allow_missing;
 
 /// Worktree entry for the open command
@@ -72,9 +72,7 @@ fn build_worktree_list(
 pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Result<()> {
     let ctx = CommandContext::new_strict(color_mode)?;
 
-    // Detect tmux — hard error if not available
-    let launcher = RealTmuxLauncher;
-    launcher.detect()?;
+    let launcher = Session::current()?;
 
     // Get worktree list
     let list_stdout = ctx.worktree_list_stdout()?;
@@ -85,21 +83,29 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
     // Detect current worktree
     let current_path = get_current_worktree_path(&ctx.git)?;
 
-    // Build list, skipping current worktree
     let root = ctx.worktree_root();
-    let (open_list, skipped_name) = build_worktree_list(&list, root.as_deref(), &current_path);
-
-    if open_list.is_empty() {
-        eprintln!("No worktrees to open (all worktrees are already in the current session).");
-        return Ok(());
-    }
+    let (mut open_list, skipped_name) = build_worktree_list(&list, root.as_deref(), &current_path);
+    let roots: Vec<_> = RealGitClient::worktree_paths(&ctx.repo_root)?
+        .iter()
+        .map(|p| canonicalize_allow_missing(p))
+        .collect();
+    let panes = launcher.panes()?;
+    let represented: Vec<_> = panes
+        .iter()
+        .filter_map(|pane| pane.path.as_ref())
+        .filter(|path| path.is_dir())
+        .filter_map(|path| owning_worktree(path, &roots))
+        .collect();
+    let requested = open_list.len();
+    open_list.retain(|wt| !represented.contains(&&canonicalize_allow_missing(Path::new(&wt.path))));
+    let skipped_existing = requested - open_list.len();
 
     let mode = resolve_mode(pane, window, ctx.config.integrations.tmux.open);
 
-    match mode {
-        OpenMode::Pane => open_as_panes(&launcher, &open_list, color_mode)?,
-        OpenMode::Window => open_as_windows(&launcher, &open_list, color_mode)?,
-    }
+    let report = match mode {
+        OpenMode::Pane => open_as_panes(&launcher, &open_list, color_mode),
+        OpenMode::Window => open_as_windows(&launcher, &open_list, color_mode),
+    };
 
     let skip_msg = skipped_name
         .as_ref()
@@ -110,82 +116,86 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
         color::info(
             color_mode,
             format!(
-                "Opened {} worktree(s) as {}s{skip_msg}",
-                open_list.len(),
-                mode
+                "Opened {} worktree(s) as {}s{skip_msg}; skipped {skipped_existing} already open; failed {}",
+                report.opened,
+                mode, report.failed
             )
         )
     );
 
+    if report.failed > 0 {
+        anyhow::bail!("Failed to open {} worktree(s)", report.failed);
+    }
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct OpenReport {
+    opened: usize,
+    failed: usize,
 }
 
 fn open_as_windows(
     launcher: &dyn TmuxLauncher,
     worktrees: &[OpenWorktree],
     color_mode: color::ColorMode,
-) -> Result<()> {
-    for wt in worktrees {
-        if let Err(e) = launcher.create_window(Path::new(&wt.path), &wt.name) {
-            anyhow::bail!("Failed to create window for {}: {e}", wt.name);
-        }
-        eprintln!(
-            "{}",
-            color::info(color_mode, format!("  + window: {}", wt.name))
-        );
-    }
-    Ok(())
+) -> OpenReport {
+    open_each(worktrees, color_mode, "window", |wt| {
+        launcher.create_window(Path::new(&wt.path), &wt.name)
+    })
 }
 
 fn open_as_panes(
     launcher: &dyn TmuxLauncher,
     worktrees: &[OpenWorktree],
     color_mode: color::ColorMode,
-) -> Result<()> {
-    let mut errors: Vec<String> = Vec::new();
-    let mut success_count = 0;
+) -> OpenReport {
+    let report = open_each(worktrees, color_mode, "split", |wt| {
+        launcher.split_pane(Path::new(&wt.path))
+    });
+    if report.opened > 0 {
+        if let Err(error) = launcher.select_tiled_layout() {
+            eprintln!(
+                "{}",
+                color::warn(
+                    color_mode,
+                    format!("Warning: select-layout tiled failed: {error:#}")
+                )
+            );
+        }
+    }
+    report
+}
 
+fn open_each(
+    worktrees: &[OpenWorktree],
+    color_mode: color::ColorMode,
+    label: &str,
+    mut create: impl FnMut(&OpenWorktree) -> Result<()>,
+) -> OpenReport {
+    let mut report = OpenReport::default();
     for wt in worktrees {
-        match launcher.split_pane(Path::new(&wt.path)) {
+        match create(wt) {
             Ok(()) => {
-                success_count += 1;
+                report.opened += 1;
                 eprintln!(
                     "{}",
-                    color::info(color_mode, format!("  + split: {}", wt.name))
+                    color::info(color_mode, format!("  + {label}: {}", wt.name))
                 );
             }
-            Err(e) => {
-                let msg = e.to_string();
-                errors.push(format!("{}: {msg}", wt.name));
+            Err(error) => {
+                report.failed += 1;
                 eprintln!(
                     "{}",
                     color::warn(
                         color_mode,
-                        format!("  ! split failed for {}: {msg}", wt.name)
+                        format!("  ! {label} failed for {}: {error:#}", wt.name)
                     )
                 );
             }
         }
     }
-
-    // Apply tiled layout for even distribution
-    if success_count > 0 {
-        if let Err(e) = launcher.select_tiled_layout() {
-            eprintln!(
-                "{}",
-                color::warn(
-                    color_mode,
-                    format!("Warning: select-layout tiled failed: {e}")
-                )
-            );
-        }
-    }
-
-    if !errors.is_empty() && success_count == 0 {
-        anyhow::bail!("All pane splits failed");
-    }
-
-    Ok(())
+    report
 }
 
 #[cfg(test)]
@@ -208,7 +218,8 @@ mod tests {
         let mock = MockTmuxLauncher::default();
         let wts = worktrees_for_test(3);
         let result = open_as_panes(&mock, &wts, ColorMode::Never);
-        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert_eq!(result.opened, 3);
+        assert_eq!(result.failed, 0);
         assert_eq!(
             mock.select_tiled_layout_calls.get(),
             1,
@@ -224,12 +235,8 @@ mod tests {
         };
         let wts = worktrees_for_test(2);
         let result = open_as_panes(&mock, &wts, ColorMode::Never);
-        assert!(result.is_err(), "expected Err when all splits fail");
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("All pane splits failed"),
-            "unexpected error message: {msg}"
-        );
+        assert_eq!(result.opened, 0);
+        assert_eq!(result.failed, 2);
         assert_eq!(
             mock.select_tiled_layout_calls.get(),
             0,
@@ -245,10 +252,8 @@ mod tests {
         };
         let wts = worktrees_for_test(2);
         let result = open_as_panes(&mock, &wts, ColorMode::Never);
-        assert!(
-            result.is_ok(),
-            "select_tiled_layout failure must not propagate as Err: {result:?}"
-        );
+        assert_eq!(result.opened, 2);
+        assert_eq!(result.failed, 0);
         assert_eq!(mock.select_tiled_layout_calls.get(), 1);
     }
 

@@ -530,6 +530,7 @@ options = ["--height=50%", "--border"]
 behavior = "auto"   # "auto" (default, flag-based), "always", "never"
 create = "window"   # "window" (default) or "pane"
 open = "window"     # Default mode for `ofsht open`: "window" or "pane"
+close_on_rm = false
 
 [integration.gh]
 # Enable/disable GitHub integration
@@ -716,6 +717,19 @@ open = "window"   # Default mode for `ofsht open`: "window" or "pane"
 ```
 
 CLI flags (`--pane`, `--window`) override the config value.
+
+Repeated `open` skips worktrees already represented by a pane in the selected
+session, including panes in subdirectories. It reports actual successful creations
+and exits nonzero if any window or pane could not be opened; successful creations
+are kept.
+
+Set `[integration.tmux] close_on_rm = true` in global config to close eligible
+single-pane windows after their worktree is successfully removed. This can terminate
+running processes and close the invoking terminal. Cleanup is off by default,
+never runs during `--dry-run`, and skips multi-pane windows, grouped sessions, and
+shared caller windows whose session cannot be identified uniquely. Independently
+linked windows are unlinked only from the identified session. Moved or unverifiable
+panes are kept; optional cleanup failures are warnings.
 
 > [!CAUTION]
 > `ofsht open` requires running inside a tmux session. Running outside tmux will fail with an error.

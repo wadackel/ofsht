@@ -567,48 +567,72 @@ pub fn cmd_rm_many(
         anyhow::bail!("Cannot remove {count} worktree(s):\n{}", lines.join("\n"));
     }
 
+    let cleanup = if ctx.config.integrations.tmux.close_on_rm && std::env::var_os("TMUX").is_some()
+    {
+        match crate::integrations::git::RealGitClient::worktree_paths(&ctx.repo_root)
+            .and_then(|roots| crate::integrations::tmux::CleanupPlan::capture(&roots, &paths))
+        {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                eprintln!("Warning: tmux cleanup skipped: {error:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     if dry_run {
         for (_, worktree_path, branch_name) in non_current_removals.iter().chain(&current_removal) {
             print_removal_plan(&ctx, worktree_path, branch_name.as_deref(), &policy);
         }
+        if let Some(plan) = &cleanup {
+            plan.print_dry_run();
+        }
         return Ok(());
     }
 
-    // Execute removals: non-current first, then current (if present)
-    for (_, worktree_path, branch_name) in &non_current_removals {
-        let path_label = display_path(worktree_path);
-        let label = branch_name.as_deref().unwrap_or(&path_label);
-        remove_worktree_internal(
-            &ctx,
-            worktree_path,
-            branch_name.as_deref(),
-            label,
-            &policy,
-            &mp,
-        )?;
+    let mut removed = Vec::new();
+    let result = (|| -> Result<()> {
+        for (_, worktree_path, branch_name) in &non_current_removals {
+            let path_label = display_path(worktree_path);
+            let label = branch_name.as_deref().unwrap_or(&path_label);
+            remove_worktree_internal(
+                &ctx,
+                worktree_path,
+                branch_name.as_deref(),
+                label,
+                &policy,
+                &mp,
+            )?;
+            removed.push(canonicalize_allow_missing(worktree_path));
+        }
+
+        if let Some((_, worktree_path, branch_name)) = &current_removal {
+            let path_label = display_path(worktree_path);
+            let label = branch_name.as_deref().unwrap_or(&path_label);
+            remove_worktree_internal(
+                &ctx,
+                worktree_path,
+                branch_name.as_deref(),
+                label,
+                &policy,
+                &mp,
+            )?;
+            removed.push(canonicalize_allow_missing(worktree_path));
+
+            let list = WorktreeList::parse(&list_stdout, None);
+            let main_path = list
+                .main()
+                .map(|m| m.path.as_str())
+                .context("git worktree list returned no entries")?;
+            crate::output::write_stdout(format_args!("{main_path}\n"))?;
+        }
+
+        Ok(())
+    })();
+    if let Some(plan) = &cleanup {
+        plan.finish(&removed);
     }
-
-    // Remove current worktree last (if requested)
-    if let Some((_, worktree_path, branch_name)) = &current_removal {
-        let path_label = display_path(worktree_path);
-        let label = branch_name.as_deref().unwrap_or(&path_label);
-        remove_worktree_internal(
-            &ctx,
-            worktree_path,
-            branch_name.as_deref(),
-            label,
-            &policy,
-            &mp,
-        )?;
-
-        // Print main worktree path for shell wrapper
-        let list = WorktreeList::parse(&list_stdout, None);
-        let main_path = list
-            .main()
-            .map(|m| m.path.as_str())
-            .context("git worktree list returned no entries")?;
-        crate::output::write_stdout(format_args!("{main_path}\n"))?;
-    }
-
-    Ok(())
+    result
 }
