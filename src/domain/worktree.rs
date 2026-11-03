@@ -231,16 +231,37 @@ impl WorktreeList {
     pub fn display_names(&self, root: Option<&std::path::Path>) -> Vec<String> {
         self.entries
             .iter()
-            .enumerate()
-            .map(|(index, entry)| {
-                if index == 0 {
-                    "@".to_string()
-                } else {
-                    self.short_name(entry, root)
-                        .unwrap_or_else(|| display_path(std::path::Path::new(&entry.path)))
-                }
-            })
+            .map(|entry| self.display_name(entry, root))
             .collect()
+    }
+
+    /// The name `display_names` shows for `entry`
+    #[must_use]
+    pub fn display_name(&self, entry: &WorktreeEntry, root: Option<&std::path::Path>) -> String {
+        if self.is_main(entry) {
+            "@".to_string()
+        } else {
+            self.short_name(entry, root)
+                .unwrap_or_else(|| display_path(std::path::Path::new(&entry.path)))
+        }
+    }
+
+    /// A name that `ofsht cd` takes to `entry`: its branch when that reaches it, otherwise the
+    /// name `display_names` shows
+    #[must_use]
+    pub fn cd_name(&self, entry: &WorktreeEntry, root: Option<&std::path::Path>) -> String {
+        // `cd` takes the main branch to the main worktree before resolving names, so it reaches
+        // main although `reaches` says no
+        match entry.branch.as_deref() {
+            Some(branch) if self.is_main(entry) || self.reaches(branch, entry, root) => {
+                branch.to_string()
+            }
+            _ => self.display_name(entry, root),
+        }
+    }
+
+    fn is_main(&self, entry: &WorktreeEntry) -> bool {
+        self.main().is_some_and(|main| main.path == entry.path)
     }
 }
 
@@ -1077,6 +1098,34 @@ mod tests {
             found_path(&list.resolve_name("/elsewhere/review", None)).as_deref(),
             Some("/elsewhere/review")
         );
+    }
+
+    #[test]
+    fn test_cd_name_is_the_branch_when_it_reaches_the_worktree() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/slot-1", Some("feature")),
+        ]);
+        assert_eq!(list.cd_name(&list.non_main()[0], Some(root())), "feature");
+    }
+
+    #[test]
+    fn test_cd_name_falls_back_when_the_branch_is_ambiguous() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/slot-1", Some("slot-2")),
+            ("/work/myapp-worktrees/slot-2", Some("other")),
+        ]);
+        assert_eq!(list.cd_name(&list.non_main()[0], Some(root())), "slot-1");
+    }
+
+    #[test]
+    fn test_cd_name_of_main_is_its_branch() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/slot-1", Some("feature")),
+        ]);
+        assert_eq!(list.cd_name(&list.entries()[0], Some(root())), "main");
     }
 
     #[test]

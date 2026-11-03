@@ -197,7 +197,7 @@ ofsht add feature-awesome --tmux      # Creates worktree and opens new tmux wind
 ```
 
 > [!NOTE]
-> The first argument is always a local branch name: an existing local branch is checked out, and any other name, including one that matches a tag or a commit, becomes a new branch. A remote-tracking name such as `origin/feature-x` is refused with the command to use instead, `ofsht add feature-x origin/feature-x`.
+> The first argument is always a local branch name: an existing local branch is checked out, and any other name, including one that matches a tag or a commit, becomes a new branch. A remote-tracking name such as `origin/feature-x` is refused with the command to use instead, `ofsht add feature-x origin/feature-x`. A branch that another worktree already has checked out is refused too, naming that worktree and the `ofsht cd` command that reaches it; when that worktree's directory is gone, the message gives the commands to run first: `git worktree prune`, preceded by `git worktree unlock` for a locked worktree.
 
 #### List Worktrees
 

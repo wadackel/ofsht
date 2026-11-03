@@ -177,3 +177,93 @@ fn recommended_command_tracks_the_remote_branch() {
         "origin/foo"
     );
 }
+
+fn create_slot_on_feature(fixture: &Fixture) -> PathBuf {
+    assert_success(&fixture.ofsht(&["create", "slot-1"]));
+    let slot_1 = fixture.worktree("slot-1");
+    git(&slot_1, &["switch", "-q", "-c", "feature"]);
+    slot_1
+}
+
+#[test]
+fn add_branch_checked_out_elsewhere_points_to_it() {
+    let fixture = Fixture::new();
+    create_slot_on_feature(&fixture);
+
+    let output = fixture.ofsht(&["add", "feature"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Branch feature is already checked out in slot-1. Use: ofsht cd feature"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Preparing worktree"), "{stderr}");
+    assert!(!fixture.worktree("feature").exists());
+}
+
+#[test]
+fn create_branch_checked_out_elsewhere_points_to_it() {
+    let fixture = Fixture::new();
+    create_slot_on_feature(&fixture);
+
+    let output = fixture.ofsht(&["create", "feature"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Branch feature is already checked out in slot-1. Use: ofsht cd feature"),
+        "{stderr}"
+    );
+    assert!(!fixture.worktree("feature").exists());
+}
+
+#[test]
+fn add_branch_checked_out_in_main_points_to_main() {
+    let fixture = Fixture::new();
+
+    let output = fixture.ofsht(&["add", "main"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Branch main is already checked out in @. Use: ofsht cd main"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn add_branch_in_missing_worktree_suggests_prune() {
+    let fixture = Fixture::new();
+    let slot_1 = create_slot_on_feature(&fixture);
+    std::fs::remove_dir_all(&slot_1).unwrap();
+
+    let output = fixture.ofsht(&["add", "feature"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("is checked out in a missing worktree at"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Run: git worktree prune"), "{stderr}");
+    assert!(!stderr.contains("unlock"), "{stderr}");
+}
+
+#[test]
+fn add_branch_in_locked_missing_worktree_suggests_unlock() {
+    let fixture = Fixture::new();
+    let slot_1 = create_slot_on_feature(&fixture);
+    git(
+        &fixture.repo,
+        &["worktree", "lock", slot_1.to_str().unwrap()],
+    );
+    std::fs::remove_dir_all(&slot_1).unwrap();
+
+    let output = fixture.ofsht(&["add", "feature"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("Run: git worktree unlock"), "{stderr}");
+    assert!(stderr.contains("then git worktree prune"), "{stderr}");
+}
