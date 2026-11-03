@@ -26,6 +26,15 @@ pub enum BranchDeletion {
     Force,
 }
 
+/// The flags of `ofsht rm`
+pub struct RmOptions {
+    pub branch_deletion: BranchDeletion,
+    /// `--force`: override every preflight refusal except a lock
+    pub force: bool,
+    /// `--dry-run`: print the removal plan and change nothing
+    pub dry_run: bool,
+}
+
 /// How `rm` treats worktrees and their branches, resolved once for every target
 struct RemovalPolicy {
     deletion: BranchDeletion,
@@ -39,6 +48,64 @@ impl RemovalPolicy {
     fn is_default(&self, branch: &str) -> bool {
         self.default_branches.iter().any(|name| name == branch)
     }
+}
+
+/// What `rm` does with one branch after removing a worktree
+#[derive(Debug, PartialEq, Eq)]
+enum BranchAction {
+    /// A default branch, kept whatever the flags say
+    KeepDefault(String),
+    /// `--keep-branch`
+    Keep(String),
+    /// `git branch -d`, or `-D` when `force`; a failure prints a warning only when `warn`
+    Delete {
+        branch: String,
+        force: bool,
+        warn: bool,
+    },
+}
+
+/// The branch actions for a worktree on `branch` that was created as `creation_branch`
+///
+/// The creation branch only goes with `-d`, and its failure stays quiet, because the name may
+/// belong to a branch that is unmerged or in use elsewhere.
+fn branch_actions(
+    policy: &RemovalPolicy,
+    branch: Option<&str>,
+    creation_branch: Option<&str>,
+) -> Vec<BranchAction> {
+    let force = match policy.deletion {
+        BranchDeletion::Keep => {
+            return branch
+                .map(|b| BranchAction::Keep(b.to_string()))
+                .into_iter()
+                .collect()
+        }
+        BranchDeletion::Safe => false,
+        BranchDeletion::Force => true,
+    };
+    let mut actions = Vec::new();
+    if let Some(branch) = branch {
+        actions.push(if policy.is_default(branch) {
+            BranchAction::KeepDefault(branch.to_string())
+        } else {
+            BranchAction::Delete {
+                branch: branch.to_string(),
+                force,
+                warn: !force,
+            }
+        });
+    }
+    if let Some(name) =
+        creation_branch.filter(|name| branch != Some(*name) && !policy.is_default(name))
+    {
+        actions.push(BranchAction::Delete {
+            branch: name.to_string(),
+            force: false,
+            warn: false,
+        });
+    }
+    actions
 }
 
 /// Remove a worktree, then handle its branch according to `policy`
@@ -107,58 +174,92 @@ fn remove_worktree_internal(
         eprintln!("{removed}");
     }
 
-    let force_branch = match policy.deletion {
-        BranchDeletion::Keep => return Ok(()),
-        BranchDeletion::Safe => false,
-        BranchDeletion::Force => true,
-    };
-    let deleted = |branch: &str| {
-        hooks::emit_line(
-            mp,
-            is_tty,
-            format!(
-                "  {}",
-                color::success(color_mode, format!("Deleted branch: {branch}"))
+    let line = |message: String| hooks::emit_line(mp, is_tty, format!("  {message}"));
+    let creation_branch = branch_from_template(&config.worktree.dir, repo_root, worktree_path);
+    for action in branch_actions(policy, branch_name, creation_branch.as_deref()) {
+        match action {
+            BranchAction::Keep(_) => {}
+            BranchAction::KeepDefault(branch) => line(
+                color::warn(
+                    color_mode,
+                    format!("Kept branch: {branch} (default branch)"),
+                )
+                .to_string(),
             ),
-        );
-    };
-    let kept = |message: String| {
-        hooks::emit_line(
-            mp,
-            is_tty,
-            format!("  {}", color::warn(color_mode, message)),
-        );
-    };
-
-    if let Some(branch) = branch_name {
-        if policy.is_default(branch) {
-            kept(format!("Kept branch: {branch} (default branch)"));
-        } else if git
-            .remove_branch(branch, force_branch, Some(repo_root))
-            .unwrap_or(false)
-        {
-            deleted(branch);
-        } else if !force_branch {
-            kept(format!(
-                "Kept branch: {branch} (not fully merged; use --force-branch to delete)"
-            ));
-        }
-    }
-
-    // The branch the worktree was created with; only a merged one goes, and a failure stays
-    // quiet because the name may belong to a branch that is unmerged or in use elsewhere
-    let creation_branch = branch_from_template(&config.worktree.dir, repo_root, worktree_path)
-        .filter(|name| branch_name != Some(name.as_str()) && !policy.is_default(name));
-    if let Some(name) = creation_branch {
-        if git
-            .remove_branch(&name, false, Some(repo_root))
-            .unwrap_or(false)
-        {
-            deleted(&name);
+            BranchAction::Delete {
+                branch,
+                force,
+                warn,
+            } => {
+                if git
+                    .remove_branch(&branch, force, Some(repo_root))
+                    .unwrap_or(false)
+                {
+                    line(
+                        color::success(color_mode, format!("Deleted branch: {branch}")).to_string(),
+                    );
+                } else if warn {
+                    line(
+                        color::warn(
+                            color_mode,
+                            format!(
+                                "Kept branch: {branch} (not fully merged; use --force-branch to delete)"
+                            ),
+                        )
+                        .to_string(),
+                    );
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+/// Print what removing the worktree would do, without changing anything
+fn print_removal_plan(
+    ctx: &CommandContext,
+    worktree_path: &std::path::Path,
+    branch_name: Option<&str>,
+    policy: &RemovalPolicy,
+) {
+    let config = &ctx.config;
+    let exists = worktree_path.exists();
+    let note = if exists {
+        ""
+    } else {
+        " (directory missing; only the registration)"
+    };
+    eprintln!("Would remove {}{note}", display_path(worktree_path));
+    if exists {
+        let hooks = &config.hooks.delete;
+        for cmd in &hooks.run {
+            eprintln!("  would run hook: {cmd}");
+        }
+        for pattern in &hooks.copy {
+            eprintln!("  would copy: {pattern}");
+        }
+        for pattern in &hooks.link {
+            eprintln!("  would link: {pattern}");
+        }
+    }
+    let creation_branch = branch_from_template(&config.worktree.dir, &ctx.repo_root, worktree_path);
+    for action in branch_actions(policy, branch_name, creation_branch.as_deref()) {
+        match action {
+            BranchAction::KeepDefault(branch) => {
+                eprintln!("  would keep branch {branch} (default branch)");
+            }
+            BranchAction::Keep(branch) => eprintln!("  would keep branch {branch}"),
+            BranchAction::Delete {
+                branch,
+                force: true,
+                ..
+            } => eprintln!("  would delete branch {branch}"),
+            BranchAction::Delete { branch, .. } => {
+                eprintln!("  would try git branch -d {branch}");
+            }
+        }
+    }
 }
 
 /// Why git would refuse to remove each of `paths`, checked before any hook runs
@@ -309,10 +410,14 @@ fn unrecoverable_work(
 #[allow(clippy::too_many_lines)]
 pub fn cmd_rm_many(
     targets: &[String],
-    branch_deletion: BranchDeletion,
-    force: bool,
+    options: &RmOptions,
     color_mode: color::ColorMode,
 ) -> Result<()> {
+    let &RmOptions {
+        branch_deletion,
+        force,
+        dry_run,
+    } = options;
     // Resolve repo_root, config, and git client once for the whole removal flow.
     let ctx = CommandContext::new_strict(color_mode)?;
 
@@ -435,15 +540,25 @@ pub fn cmd_rm_many(
             .iter()
             .map(|(path, reason)| format!("  {}: {reason}", display_path(path)))
             .collect();
-        anyhow::bail!(
-            "Cannot remove {} worktree(s):\n{}",
-            refused
-                .iter()
-                .map(|(path, _)| path)
-                .collect::<HashSet<_>>()
-                .len(),
-            lines.join("\n")
-        );
+        let count = refused
+            .iter()
+            .map(|(path, _)| path)
+            .collect::<HashSet<_>>()
+            .len();
+        if dry_run {
+            anyhow::bail!(
+                "Would refuse:\n{}\nNothing would be removed: {count} worktree(s) refused",
+                lines.join("\n")
+            );
+        }
+        anyhow::bail!("Cannot remove {count} worktree(s):\n{}", lines.join("\n"));
+    }
+
+    if dry_run {
+        for (_, worktree_path, branch_name) in non_current_removals.iter().chain(&current_removal) {
+            print_removal_plan(&ctx, worktree_path, branch_name.as_deref(), &policy);
+        }
+        return Ok(());
     }
 
     // Execute removals: non-current first, then current (if present)

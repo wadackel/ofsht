@@ -260,7 +260,12 @@ ofsht rm --force-branch feature-awesome
 
 # Remove a worktree with modified or untracked files or initialized submodules
 ofsht rm --force feature-awesome
+
+# Show what would be removed, which hooks would run, and what would happen to each branch
+ofsht rm --dry-run feature-awesome
 ```
+
+`--dry-run` changes nothing and prints its plan to stderr, so the shell integration does not change directory. It runs the same checks as a real removal: when any target would be refused, it lists only the refusals, ends with `Nothing would be removed: N worktree(s) refused`, and exits with 1; otherwise it exits with 0. Whether `git branch -d` succeeds is decided by Git at removal time, so the plan says `would try git branch -d <branch>` rather than predicting it.
 
 > [!NOTE]
 > Before running any delete hook, `ofsht rm` checks every target for what `git worktree remove` would refuse (a locked worktree, modified or untracked files, initialized submodules) and for work the removal would lose for good: commits that only a detached HEAD reaches, and a rebase, merge, cherry-pick, revert, or bisect in progress. If any target would be refused, nothing is removed and every refused target is listed. `--force` lets all of these go except a lock, as `git worktree remove --force` does for files and submodules; it does not imply `--force-branch`. A locked worktree is refused even with `--force`; run `git worktree unlock` first. Because the check runs before the delete hooks, a worktree that a hook would have cleaned up needs `--force`.
