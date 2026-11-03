@@ -39,10 +39,10 @@ git commit --allow-empty -m "Initial commit"
 
 ### 2. Create Worktree (`ofsht add`)
 
-#### 2-1. Basic Creation (from HEAD)
+#### 2-1. Basic Creation (from the current worktree's HEAD)
 
 ```bash
-# Create new worktree from HEAD
+# Create new worktree from the HEAD of the worktree you run it in
 ofsht add feature-awesome
 
 # Expected output:

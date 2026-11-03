@@ -62,10 +62,14 @@ impl Fixture {
     }
 
     fn ofsht(&self, args: &[&str]) -> Output {
+        self.ofsht_in(&self.repo, args)
+    }
+
+    fn ofsht_in(&self, dir: &Path, args: &[&str]) -> Output {
         let home = self.temp.path().join("home");
         Command::cargo_bin("ofsht")
             .unwrap()
-            .current_dir(&self.repo)
+            .current_dir(dir)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("HOME", &home)
@@ -369,4 +373,104 @@ fn add_inside_missing_worktree_is_not_nesting() {
     let output = fixture.ofsht(&["add", "slot-1/foo"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("Cannot create"), "{stderr}");
+}
+
+/// `slot-1` two commits ahead on `feature`, while the main worktree moved on to another commit
+fn diverged_slot(fixture: &Fixture) -> PathBuf {
+    assert_success(&fixture.ofsht(&["create", "slot-1"]));
+    let slot_1 = fixture.worktree("slot-1");
+    git(
+        &fixture.repo,
+        &["commit", "-q", "--allow-empty", "-m", "main moves"],
+    );
+    git(&slot_1, &["switch", "-q", "-c", "feature"]);
+    git(
+        &slot_1,
+        &["commit", "-q", "--allow-empty", "-m", "feature work 1"],
+    );
+    git(
+        &slot_1,
+        &["commit", "-q", "--allow-empty", "-m", "feature work 2"],
+    );
+    slot_1
+}
+
+fn rev(fixture: &Fixture, rev: &str) -> String {
+    git_output(&fixture.repo, &["rev-parse", rev])
+}
+
+#[test]
+fn create_without_start_point_starts_from_current_worktree() {
+    let fixture = Fixture::new();
+    let slot_1 = diverged_slot(&fixture);
+
+    assert_success(&fixture.ofsht_in(&slot_1, &["create", "from-here"]));
+
+    assert_eq!(rev(&fixture, "from-here"), rev(&fixture, "feature"));
+}
+
+#[test]
+fn add_without_start_point_starts_from_current_worktree() {
+    let fixture = Fixture::new();
+    let slot_1 = diverged_slot(&fixture);
+
+    assert_success(&fixture.ofsht_in(&slot_1, &["add", "from-here"]));
+
+    assert_eq!(rev(&fixture, "from-here"), rev(&fixture, "feature"));
+}
+
+#[test]
+fn create_from_detached_worktree_starts_from_its_commit() {
+    let fixture = Fixture::new();
+    let slot_1 = diverged_slot(&fixture);
+    git(&slot_1, &["switch", "-q", "--detach"]);
+    git(
+        &slot_1,
+        &["commit", "-q", "--allow-empty", "-m", "detached work"],
+    );
+    let head = git_output(&slot_1, &["rev-parse", "HEAD"]);
+
+    assert_success(&fixture.ofsht_in(&slot_1, &["create", "d"]));
+
+    assert_eq!(rev(&fixture, "d"), head);
+}
+
+#[test]
+fn create_with_relative_start_point_uses_current_worktree() {
+    let fixture = Fixture::new();
+    let slot_1 = diverged_slot(&fixture);
+
+    assert_success(&fixture.ofsht_in(&slot_1, &["create", "z", "HEAD~1"]));
+
+    assert_eq!(rev(&fixture, "z"), rev(&fixture, "feature~1"));
+}
+
+#[test]
+fn create_from_main_worktree_starts_from_main_head() {
+    let fixture = Fixture::new();
+    diverged_slot(&fixture);
+
+    assert_success(&fixture.ofsht(&["create", "x"]));
+
+    assert_eq!(rev(&fixture, "x"), rev(&fixture, "main"));
+}
+
+#[test]
+fn create_with_start_point_is_unchanged() {
+    let fixture = Fixture::new();
+    let slot_1 = diverged_slot(&fixture);
+
+    assert_success(&fixture.ofsht_in(&slot_1, &["create", "y", "main"]));
+
+    assert_eq!(rev(&fixture, "y"), rev(&fixture, "main"));
+}
+
+#[test]
+fn create_in_unborn_repository_succeeds() {
+    let fixture = Fixture::new();
+    let unborn = fixture.temp.path().join("unborn");
+    std::fs::create_dir_all(&unborn).unwrap();
+    git(&unborn, &["init", "-q", "-b", "main"]);
+
+    assert_success(&fixture.ofsht_in(&unborn, &["create", "x"]));
 }

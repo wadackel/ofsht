@@ -29,7 +29,7 @@ pub enum Commands {
         #[arg(add = ArgValueCompleter::new(list_git_branches))]
         branch: Option<String>,
         /// Start point (branch, tag, or commit) for the new branch.
-        /// Defaults to HEAD if not specified.
+        /// Defaults to the HEAD of the worktree the command runs in.
         #[arg(add = ArgValueCompleter::new(list_git_refs))]
         start_point: Option<String>,
         /// Create a new tmux window for the worktree
@@ -45,7 +45,7 @@ pub enum Commands {
         #[arg(add = ArgValueCompleter::new(list_git_branches))]
         branch: Option<String>,
         /// Start point (branch, tag, or commit) for the new branch.
-        /// Defaults to HEAD if not specified.
+        /// Defaults to the HEAD of the worktree the command runs in.
         #[arg(add = ArgValueCompleter::new(list_git_refs))]
         start_point: Option<String>,
     },

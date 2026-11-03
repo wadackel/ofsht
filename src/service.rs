@@ -17,6 +17,9 @@ pub struct CreateWorktreeRequest<'a> {
     pub branch: &'a str,
     pub start_point: Option<&'a str>,
     pub repo_root: &'a Path,
+    /// The worktree the command runs in: `git worktree add` runs there, so `HEAD` and other
+    /// per-worktree refs mean what they mean in plain git. `None` falls back to `repo_root`
+    pub current_worktree: Option<&'a Path>,
     pub path_template: &'a str,
     pub zoxide_enabled: bool,
 }
@@ -89,7 +92,7 @@ where
             req.branch,
             &worktree_path,
             req.start_point,
-            Some(req.repo_root),
+            Some(req.current_worktree.unwrap_or(req.repo_root)),
         )?;
 
         on_after_git(&worktree_path)?;
@@ -212,6 +215,7 @@ mod tests {
             branch,
             start_point: None,
             repo_root,
+            current_worktree: None,
             path_template,
             zoxide_enabled,
         }
@@ -240,6 +244,7 @@ mod tests {
             branch: "feature",
             start_point: Some("main"),
             repo_root: &repo_root,
+            current_worktree: None,
             path_template: "../{repo}-worktrees/{branch}",
             zoxide_enabled: false,
         };
