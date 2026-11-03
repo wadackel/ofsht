@@ -152,6 +152,7 @@ run = [
 # across all worktrees.
 #
 # This file overrides global settings for this specific repository.
+# An empty action list disables its global counterpart instead of inheriting it.
 # Add this file to .gitignore if settings are user-specific,
 # or commit it if settings should be shared with the team.
 

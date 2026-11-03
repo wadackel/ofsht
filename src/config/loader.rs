@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use super::schema::{Config, IntegrationsConfig, ProjectConfig, UserConfig};
+use super::schema::{Config, HookActions, ProjectConfig, ProjectHookActions, UserConfig};
 
 impl Config {
     /// Load configuration with fallback (from specified repository root)
@@ -101,30 +101,32 @@ fn load_user_config() -> Result<Option<UserConfig>> {
     read_config_file(&path)
 }
 
-/// Compose a `ProjectConfig` and a `UserConfig` into the runtime `Config`.
-///
-/// Cases:
-/// - project ∧ user → project's `hooks` + `worktree`, user's `integrations`.
-/// - project ∧ ¬user → project's `hooks` + `worktree`, default `integrations`.
-/// - ¬project ∧ user → all of `user`'s fields.
-/// - ¬project ∧ ¬user → `Config::default()`.
+/// Apply supplied local fields over global settings and built-in defaults.
 fn build_effective_config(project: Option<ProjectConfig>, user: Option<UserConfig>) -> Config {
-    match (project, user) {
-        (Some(p), Some(u)) => Config {
-            hooks: p.hooks,
-            worktree: p.worktree,
-            integrations: u.integrations,
-        },
-        (Some(p), None) => Config {
-            hooks: p.hooks,
-            worktree: p.worktree,
-            integrations: IntegrationsConfig::default(),
-        },
-        (None, Some(u)) => Config {
-            hooks: u.hooks,
-            worktree: u.worktree,
-            integrations: u.integrations,
-        },
-        (None, None) => Config::default(),
+    let user = user.unwrap_or_default();
+    let mut config = Config {
+        hooks: user.hooks,
+        worktree: user.worktree,
+        integrations: user.integrations,
+    };
+    if let Some(project) = project {
+        if let Some(dir) = project.worktree.dir {
+            config.worktree.dir = dir;
+        }
+        merge_actions(&mut config.hooks.create, project.hooks.create);
+        merge_actions(&mut config.hooks.delete, project.hooks.delete);
+    }
+    config
+}
+
+fn merge_actions(target: &mut HookActions, local: ProjectHookActions) {
+    if let Some(run) = local.run {
+        target.run = run;
+    }
+    if let Some(copy) = local.copy {
+        target.copy = copy;
+    }
+    if let Some(link) = local.link {
+        target.link = link;
     }
 }

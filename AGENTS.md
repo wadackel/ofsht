@@ -138,11 +138,12 @@ src/
   - Uses `$XDG_CONFIG_HOME/ofsht/config.toml` if set (must be absolute path)
   - Fallbacks to `~/.config/ofsht/config.toml` otherwise
   - **Integration settings (`zoxide`, `fzf`, `tmux`) are ONLY available in global config**
-- Default config: Hard-coded defaults if no files exist
-- The `Config::load_impl()` function handles this cascading logic:
-  1. If local config exists: Load worktree/hooks settings from local, integration settings from global (or defaults)
-  2. If only global config exists: Load all settings from global
-  3. If neither exists: Use default config
+- Default config: Hard-coded defaults for fields omitted from both files
+- The loader composes configuration per field:
+  1. Start with global settings or defaults
+  2. Override only supplied local `worktree.dir` and create/delete `run`, `copy`, and `link` fields
+  3. Keep global/default integration settings; local integration sections are parse errors
+- Local lists replace global lists; an explicit `[]` disables that action, while an omitted field or empty section inherits it
 
 **Hook Execution Flow** (`hooks.rs`)
 1. Commands run first (`actions.run`)
@@ -198,6 +199,7 @@ src/
 **Path Template Expansion** (`commands/add.rs`, `commands/create.rs`)
 - Template variables: `{repo}` and `{branch}`
 - Supports both absolute paths (`/tmp/worktrees/...`) and relative paths (`../{repo}-worktrees/...`)
+- A leading `~` component expands to the home directory in creation, name resolution, and creation-branch cleanup
 - Repository name extracted from main repository root directory name
 - Relative paths are resolved from main repository root (not current directory)
 - Default template: `../{repo}-worktrees/{branch}`

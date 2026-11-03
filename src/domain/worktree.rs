@@ -316,7 +316,8 @@ pub fn detached_heads(porcelain: &str) -> Vec<(String, String)> {
 /// The path `worktree.dir` gives a worktree for `branch`
 ///
 /// `{repo}` is the repository root's directory name; a relative result is resolved from the
-/// repository root. `None` when the root has no usable name.
+/// repository root; a leading `~` component expands to the home directory.
+/// `None` when the repository name or required home directory is unavailable.
 #[must_use]
 pub fn expand_worktree_path(
     template: &str,
@@ -328,11 +329,29 @@ pub fn expand_worktree_path(
     let expanded = template
         .replace("{repo}", repo_name)
         .replace("{branch}", branch);
-    Some(if expanded.starts_with('/') {
-        std::path::PathBuf::from(expanded)
+    resolve_template_path(
+        std::path::Path::new(&expanded),
+        repo_root,
+        dirs::home_dir().as_deref(),
+        std::path::Path::new(template).starts_with("~"),
+    )
+}
+
+fn resolve_template_path(
+    path: &std::path::Path,
+    repo_root: &std::path::Path,
+    home: Option<&std::path::Path>,
+    home_relative: bool,
+) -> Option<std::path::PathBuf> {
+    // A substituted repository name of "~" must remain data, not become template syntax.
+    let expanded = if home_relative {
+        let tail = path.strip_prefix("~").ok()?;
+        let home = home.filter(|path| path.is_absolute())?;
+        home.join(tail)
     } else {
-        repo_root.join(expanded)
-    })
+        path.to_path_buf()
+    };
+    Some(repo_root.join(expanded))
 }
 
 /// The branch whose `worktree.dir` expansion is `worktree_path`, if any
@@ -354,11 +373,12 @@ pub fn branch_from_template(
             .rfind(std::path::is_separator)
             .map_or(0, |index| index + 1),
     );
-    let base = if directory.starts_with('/') {
-        std::path::PathBuf::from(directory)
-    } else {
-        repo_root.join(directory)
-    };
+    let base = resolve_template_path(
+        std::path::Path::new(directory),
+        repo_root,
+        dirs::home_dir().as_deref(),
+        std::path::Path::new(template).starts_with("~"),
+    )?;
 
     let path = canonicalize_allow_missing(worktree_path);
     let relative = path.strip_prefix(canonicalize_allow_missing(&base)).ok()?;
@@ -416,7 +436,13 @@ pub fn worktree_root_from_template(
     let directory = expanded
         .rfind(std::path::is_separator)
         .map_or("", |index| &expanded[..=index]);
-    Some(canonicalize_allow_missing(&repo_root.join(directory)))
+    let path = resolve_template_path(
+        std::path::Path::new(directory),
+        repo_root,
+        dirs::home_dir().as_deref(),
+        std::path::Path::new(template).starts_with("~"),
+    )?;
+    Some(canonicalize_allow_missing(&path))
 }
 
 /// Calculate the depth from {branch} placeholder to the worktree root
@@ -509,6 +535,38 @@ pub fn calculate_relative_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_expansion_requires_an_absolute_home_and_only_expands_the_first_component() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let home = temp.path().join("home");
+        let path = std::path::Path::new;
+        assert_eq!(
+            resolve_template_path(path("~/pool/slot"), &repo, Some(&home), true),
+            Some(home.join("pool/slot"))
+        );
+        assert_eq!(
+            resolve_template_path(path("~"), &repo, Some(&home), true),
+            Some(home.clone())
+        );
+        assert!(resolve_template_path(path("~/pool"), &repo, None, true).is_none());
+        assert!(
+            resolve_template_path(path("~/pool"), &repo, Some(path("relative-home")), true)
+                .is_none()
+        );
+        for relative in ["../pool", "~someone/pool", "pool/~/slot", "$HOME/pool"] {
+            assert_eq!(
+                resolve_template_path(path(relative), &repo, Some(&home), false),
+                Some(repo.join(relative))
+            );
+        }
+        let absolute = temp.path().join("absolute");
+        assert_eq!(
+            resolve_template_path(&absolute, &repo, None, false),
+            Some(absolute)
+        );
+    }
     use std::path::PathBuf;
 
     // --- Tests for relative path calculation utilities ---

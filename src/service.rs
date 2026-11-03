@@ -64,7 +64,9 @@ where
         F: FnOnce(&Path) -> Result<()>,
     {
         let worktree_path = expand_worktree_path(req.path_template, req.repo_root, req.branch)
-            .context("Failed to get repository name")?;
+            .context(
+                "Failed to expand worktree path: repository name or home directory unavailable",
+            )?;
 
         let dir = req.current_worktree.unwrap_or(req.repo_root);
         if req.detach {

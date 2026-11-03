@@ -419,6 +419,12 @@ From a linked worktree of a `--separate-git-dir` repository, git has no record o
 2. **Global config** (`~/.config/ofsht/config.toml`): All settings, including integrations
 3. **Built-in defaults**: Fallback values if no config files exist
 
+Settings inherit per field. An omitted `worktree.dir` or create/delete `run`,
+`copy`, or `link` action uses the global value, then the built-in default. A local
+list replaces the corresponding global list; `[]` explicitly disables that action.
+Empty local sections inherit their global fields. A leading `~` path component in
+`worktree.dir` expands to the home directory for creation and name resolution.
+
 > [!IMPORTANT]
 > Integration settings (`[integration.zoxide]`, `[integration.fzf]`, `[integration.tmux]`, `[integration.gh]`) belong only in global config. Adding them to `.ofsht.toml` causes a parse error. `add`, `create`, `rm`, `sync`, and `open` stop on this error; `ls` and `cd` warn and fall back to default settings for the entire configuration.
 
