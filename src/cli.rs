@@ -250,14 +250,20 @@ mod tests {
     }
 
     #[test]
-    fn test_list_git_branches_returns_branches_in_git_repo() {
-        // When running in a git repo, should return branch list (at least one branch exists)
-        let result = list_git_branches(OsStr::new(""));
-        // In a valid git repo, there should be at least one branch
-        assert!(
-            !result.is_empty(),
-            "Should return branches when in git repo"
-        );
+    fn test_list_git_branches_matches_local_branches() {
+        // CI checks out a detached HEAD with no local branch, so compare with git rather
+        // than expecting at least one
+        let expected: HashSet<String> = RealGitClient
+            .for_each_ref(&["refs/heads"], "%(refname:lstrip=2)", None)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let result: HashSet<String> = list_git_branches(OsStr::new(""))
+            .iter()
+            .map(|candidate| candidate.get_value().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(result, expected);
     }
 
     #[test]
