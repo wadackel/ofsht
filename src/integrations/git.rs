@@ -28,8 +28,8 @@ pub trait GitClient {
     /// Run `git worktree list --porcelain`.
     fn list_worktrees(&self, dir: Option<&Path>) -> Result<String>;
 
-    /// Run `git worktree remove <path>`.
-    fn remove_worktree(&self, path: &Path, dir: Option<&Path>) -> Result<()>;
+    /// Run `git worktree remove <path>`, with `--force` when `force`.
+    fn remove_worktree(&self, path: &Path, force: bool, dir: Option<&Path>) -> Result<()>;
 
     /// Run `git branch -d <branch>`, or `git branch -D <branch>` when `force`.
     ///
@@ -123,9 +123,13 @@ impl GitClient for RealGitClient {
         run_capturing(cmd, "worktree list")
     }
 
-    fn remove_worktree(&self, path: &Path, dir: Option<&Path>) -> Result<()> {
+    fn remove_worktree(&self, path: &Path, force: bool, dir: Option<&Path>) -> Result<()> {
         let mut cmd = build_command(dir);
-        cmd.arg("worktree").arg("remove").arg(path);
+        cmd.arg("worktree").arg("remove");
+        if force {
+            cmd.arg("--force");
+        }
+        cmd.arg(path);
         run_capturing(cmd, "worktree remove")?;
         Ok(())
     }
@@ -269,7 +273,7 @@ pub mod tests {
             Ok(self.list_output.clone())
         }
 
-        fn remove_worktree(&self, _path: &Path, _dir: Option<&Path>) -> Result<()> {
+        fn remove_worktree(&self, _path: &Path, _force: bool, _dir: Option<&Path>) -> Result<()> {
             if self.remove_worktree_should_fail {
                 anyhow::bail!("Mock git remove worktree failure");
             }
@@ -348,7 +352,7 @@ pub mod tests {
     fn test_mock_git_client_remove_worktree_success() {
         let client = MockGitClient::default();
         let path = PathBuf::from("/test/worktree");
-        let result = client.remove_worktree(&path, None);
+        let result = client.remove_worktree(&path, false, None);
         assert!(result.is_ok());
     }
 

@@ -257,6 +257,25 @@ fn directory_name(entry: &WorktreeEntry) -> Option<&str> {
         .and_then(|name| name.to_str())
 }
 
+/// Paths of the worktrees that `git worktree list --porcelain` reports as locked
+#[must_use]
+pub fn locked_paths(porcelain: &str) -> Vec<String> {
+    porcelain
+        .split("\n\n")
+        .filter(|block| {
+            block
+                .lines()
+                .any(|line| line == "locked" || line.starts_with("locked "))
+        })
+        .filter_map(|block| {
+            block
+                .lines()
+                .find_map(|line| line.strip_prefix("worktree "))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 /// The path `worktree.dir` gives a worktree for `branch`
 ///
 /// `{repo}` is the repository root's directory name; a relative result is resolved from the
@@ -821,6 +840,13 @@ mod tests {
             expand_worktree_path("/pool/{branch}", repo, "x"),
             Some(std::path::PathBuf::from("/pool/x"))
         );
+    }
+
+    #[test]
+    fn test_locked_paths_reads_locked_lines_with_and_without_reason() {
+        let porcelain = "worktree /repo\nHEAD a\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD b\nbranch refs/heads/a\nlocked\n\nworktree /wt-b\nHEAD c\ndetached\nlocked on a usb disk\n\nworktree /wt-c\nHEAD d\nbranch refs/heads/c\n\n";
+        assert_eq!(locked_paths(porcelain), ["/wt-a", "/wt-b"]);
+        assert!(locked_paths("worktree /repo\nHEAD a\nbranch refs/heads/main\n").is_empty());
     }
 
     #[test]

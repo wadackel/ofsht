@@ -68,6 +68,10 @@ pub enum Commands {
         /// default branches are always kept
         #[arg(long, conflicts_with = "keep_branch")]
         force_branch: bool,
+        /// Remove worktrees with modified or untracked files or initialized submodules
+        /// (`git worktree remove --force`); locked worktrees are still refused
+        #[arg(long)]
+        force: bool,
     },
     /// Navigate to a worktree (prints path)
     /// When name is not provided, fzf will be used for interactive selection (if enabled)
