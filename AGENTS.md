@@ -239,6 +239,11 @@ All commands in `src/commands/` modules follow a consistent pattern:
 
 ### Configuration Schema
 
+The global configuration accepts all sections below. Local `.ofsht.toml` accepts
+only `worktree` and `hooks`. Both hook sections support `run`, `copy`, and `link`;
+delete hooks run before Git removes the worktree. Link entries are path lists and
+use the same relative path in the main repository and the target worktree.
+
 ```toml
 [worktree]
 dir = "../{repo}-worktrees/{branch}"
@@ -246,11 +251,10 @@ dir = "../{repo}-worktrees/{branch}"
 [hooks.create]
 run = ["command1", "command2"]  # Shell commands
 copy = ["file1", "file2"]       # Files to copy
-link = { "src" = "dest" }       # Symlinks (src in repo -> dest in worktree)
+link = ["path"]
 
 [hooks.delete]
 run = ["command1"]
-# Note: copy and link actions are not supported in delete hooks
 
 [integration.zoxide]
 enabled = true  # Default: true (only available in global config)

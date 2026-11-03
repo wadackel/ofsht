@@ -255,6 +255,11 @@ All commands in `src/commands/` modules follow a consistent pattern:
 
 ### Configuration Schema
 
+The global configuration accepts all sections below. Local `.ofsht.toml` accepts
+only `worktree` and `hooks`. Both hook sections support `run`, `copy`, and `link`;
+delete hooks run before Git removes the worktree. Link entries are path lists and
+use the same relative path in the main repository and the target worktree.
+
 ```toml
 [worktree]
 dir = "../{repo}-worktrees/{branch}"
@@ -262,11 +267,10 @@ dir = "../{repo}-worktrees/{branch}"
 [hooks.create]
 run = ["command1", "command2"]  # Shell commands
 copy = ["file1", "file2"]       # Files to copy
-link = { "src" = "dest" }       # Symlinks (src in repo -> dest in worktree)
+link = ["path"]
 
 [hooks.delete]
 run = ["command1"]
-# Note: copy and link actions are not supported in delete hooks
 
 [integration.zoxide]
 enabled = true  # Default: true (only available in global config)
@@ -417,7 +421,7 @@ Good alert usage in README.md:
 > The `add` command automatically navigates to the new worktree when shell integration is enabled. Use `create` instead if you want to stay in the current directory.
 
 > [!IMPORTANT]
-> Integration settings (`[integration.zoxide]`, `[integration.fzf]`, etc.) are ONLY read from global config. Placing them in `.ofsht.toml` will silently have no effect.
+> Integration settings (`[integration.zoxide]`, `[integration.fzf]`, etc.) belong only in global config. Adding them to `.ofsht.toml` causes a parse error. `add`, `create`, `rm`, `sync`, and `open` stop on this error; `ls` and `cd` warn and fall back to default settings for the entire configuration.
 
 > [!CAUTION]
 > tmux integration requires running `ofsht add` inside an active tmux session. Using `--tmux` outside of tmux will fail with an error.
