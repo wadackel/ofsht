@@ -50,7 +50,7 @@ Run `ofsht --help` or `ofsht <command> --help` when command details are uncertai
   ofsht rm feature-branch
   ofsht rm /absolute/path/to/worktree
   ```
-  By default the branch is deleted with `git branch -d`; an unmerged branch is kept and a `Kept branch:` warning is printed. Use `--keep-branch` to keep the branch, or `--force-branch` to delete an unmerged branch only when the user explicitly wants its commits discarded.
+  By default the branch is deleted with `git branch -d`; an unmerged branch is kept and a `Kept branch:` warning is printed. Use `--keep-branch` to keep the branch, or `--force-branch` to delete an unmerged branch only when the user explicitly wants its commits discarded. Default branches (`origin/HEAD`, `init.defaultBranch`, `main`, `master`) are never deleted. When the worktree has moved to another branch, the merged branch it was created with is deleted too unless `--keep-branch` is given.
 - Re-apply create hooks to existing worktrees:
   ```bash
   ofsht sync

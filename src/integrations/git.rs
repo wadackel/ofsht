@@ -134,7 +134,7 @@ impl GitClient for RealGitClient {
         let flag = if force { "-D" } else { "-d" };
         let mut cmd = build_command(dir);
         let output = cmd
-            .args(["branch", flag, branch])
+            .args(["branch", flag, "--", branch])
             .output()
             .with_context(|| format!("Failed to execute git branch {flag}"))?;
 
@@ -151,8 +151,11 @@ impl GitClient for RealGitClient {
                 .filter(|out| !out.is_empty())
         };
         // Any one source can be missing or stale (origin/HEAD exists only after a clone)
-        let origin_head = read(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-            .map(|name| name.strip_prefix("origin/").unwrap_or(&name).to_string());
+        // The full ref, because --short turns ambiguous names into remotes/origin/<x>
+        let origin_head = read(&["symbolic-ref", "refs/remotes/origin/HEAD"]).and_then(|name| {
+            name.strip_prefix("refs/remotes/origin/")
+                .map(str::to_string)
+        });
         let configured = read(&["config", "init.defaultBranch"]);
         let mut branches: Vec<String> = Vec::new();
         for name in origin_head

@@ -293,7 +293,11 @@ pub fn branch_from_template(
     #[allow(clippy::literal_string_with_formatting_args)]
     let expanded = template.replace("{repo}", repo_name);
     let (before, after) = expanded.split_once("{branch}")?;
-    let (directory, partial) = before.split_at(before.rfind('/').map_or(0, |index| index + 1));
+    let (directory, partial) = before.split_at(
+        before
+            .rfind(std::path::is_separator)
+            .map_or(0, |index| index + 1),
+    );
     let base = if directory.starts_with('/') {
         std::path::PathBuf::from(directory)
     } else {

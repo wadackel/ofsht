@@ -26,6 +26,19 @@ pub enum BranchDeletion {
     Force,
 }
 
+/// How `rm` treats branches, resolved once for every target
+struct BranchPolicy {
+    deletion: BranchDeletion,
+    /// Never deleted, even with `--force-branch`: losing unpushed work on them costs the most
+    default_branches: Vec<String>,
+}
+
+impl BranchPolicy {
+    fn is_default(&self, branch: &str) -> bool {
+        self.default_branches.iter().any(|name| name == branch)
+    }
+}
+
 /// Remove a worktree, then handle its branch according to `branch_policy`
 fn remove_worktree_internal(
     ctx: &CommandContext,
@@ -144,19 +157,6 @@ fn remove_worktree_internal(
     }
 
     Ok(())
-}
-
-/// How `rm` treats branches, resolved once for every target
-pub struct BranchPolicy {
-    pub deletion: BranchDeletion,
-    /// Never deleted, even with `--force-branch`: losing unpushed work on them costs the most
-    pub default_branches: Vec<String>,
-}
-
-impl BranchPolicy {
-    fn is_default(&self, branch: &str) -> bool {
-        self.default_branches.iter().any(|name| name == branch)
-    }
 }
 
 /// Remove one or multiple worktrees
