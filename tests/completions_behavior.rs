@@ -337,6 +337,18 @@ fn test_rm_completion_shows_flags_with_dash() {
 
 #[test]
 #[serial]
+fn test_add_branch_completion_uses_full_branch_names() {
+    let repo = GitTestRepo::new();
+    GitTestRepo::run_git(&repo.dir, &["branch", "v1"]);
+    GitTestRepo::run_git(&repo.dir, &["tag", "v1"]);
+
+    let branches = get_completions(&["add", ""], repo.path());
+    assert!(branches.contains(&"v1".to_string()), "{branches:?}");
+    assert!(!branches.contains(&"heads/v1".to_string()), "{branches:?}");
+}
+
+#[test]
+#[serial]
 fn test_add_branch_completion_offers_local_branches_only() {
     let repo = GitTestRepo::new();
     GitTestRepo::run_git(

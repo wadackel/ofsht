@@ -59,7 +59,7 @@ pub trait GitClient {
     /// Returns `Ok(true)` when the ref exists, `Ok(false)` when git exits
     /// non-zero (ref does not exist), and `Err` only when the git process
     /// cannot be spawned.
-    fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> Result<bool>;
+    fn branch_exists(&self, name: &str, dir: Option<&Path>) -> Result<bool>;
 
     /// Run `git <args>` (caller supplies the full argument list including
     /// `rev-parse`) and return stdout on success.
@@ -190,7 +190,8 @@ impl GitClient for RealGitClient {
                 .output()
                 .is_ok_and(|out| out.status.success())
         };
-        if !succeeds(&["rev-parse", "--verify", "--quiet", &full]) {
+        // show-ref takes the exact ref name; rev-parse would also accept suffixes like `~1`
+        if !succeeds(&["show-ref", "--verify", "--quiet", &full]) {
             return None;
         }
         if succeeds(&["symbolic-ref", "-q", &full]) {
@@ -211,13 +212,13 @@ impl GitClient for RealGitClient {
         let mut cmd = build_command(dir);
         let output = cmd
             .args([
-                "rev-parse",
+                "show-ref",
                 "--verify",
                 "--quiet",
                 &format!("refs/heads/{name}"),
             ])
             .output()
-            .context("Failed to execute git rev-parse --verify")?;
+            .context("Failed to execute git show-ref --verify")?;
         Ok(output.status.success())
     }
 
@@ -330,7 +331,7 @@ pub mod tests {
             None
         }
 
-        fn branch_exists(&self, _ref_: &str, _dir: Option<&Path>) -> Result<bool> {
+        fn branch_exists(&self, _name: &str, _dir: Option<&Path>) -> Result<bool> {
             Ok(self.branch_exists_value)
         }
 

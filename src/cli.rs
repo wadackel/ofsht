@@ -173,7 +173,7 @@ pub fn list_git_refs(current: &OsStr) -> Vec<CompletionCandidate> {
 pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
     let git = RealGitClient;
     // Local branches only: `add` refuses a remote-tracking name, which the start point takes
-    let Ok(stdout) = git.for_each_ref(&["refs/heads"], "%(refname:short)", None) else {
+    let Ok(stdout) = git.for_each_ref(&["refs/heads"], "%(refname:lstrip=2)", None) else {
         return Vec::new();
     };
 

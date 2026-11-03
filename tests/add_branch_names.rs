@@ -118,6 +118,22 @@ fn add_with_commit_name_creates_branch() {
 }
 
 #[test]
+fn add_with_revision_suffix_does_not_create_detached_worktree() {
+    let fixture = Fixture::new();
+    git(
+        &fixture.repo,
+        &["commit", "-q", "--allow-empty", "-m", "Second commit"],
+    );
+
+    let _ = fixture.ofsht(&["create", "main~1"]);
+
+    let detached = git_output(&fixture.repo, &["worktree", "list", "--porcelain"])
+        .lines()
+        .any(|line| line == "detached");
+    assert!(!detached, "main~1 produced a detached worktree");
+}
+
+#[test]
 fn add_with_remote_tracking_name_is_refused() {
     let fixture = Fixture::new();
 
