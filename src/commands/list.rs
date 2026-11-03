@@ -21,6 +21,7 @@ use crate::path_utils::normalize_absolute_path;
 pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
     let ctx = CommandContext::new_lenient(color_mode)?;
     let stdout = ctx.worktree_list_stdout()?;
+    let root = ctx.worktree_root();
 
     // Get current directory for active worktree detection
     let current_dir = std::env::current_dir().ok();
@@ -44,13 +45,9 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
             .collect();
 
         // Format and print table to stderr (color_mode controls ANSI emission)
-        let lines = format_worktree_table(
-            entries,
-            &commit_times,
-            show_path,
-            color_mode,
-            Some(&ctx.config),
-        );
+        let names = list.display_names(root.as_deref());
+        let lines =
+            format_worktree_table(entries, &commit_times, show_path, color_mode, Some(&names));
         for line in lines {
             eprintln!("{line}");
         }
@@ -71,13 +68,9 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
 
             // Format and print table to stdout
             // color_mode determines whether ANSI codes are included
-            let lines = format_worktree_table(
-                entries,
-                &commit_times,
-                show_path,
-                color_mode,
-                Some(&ctx.config),
-            );
+            let names = list.display_names(root.as_deref());
+            let lines =
+                format_worktree_table(entries, &commit_times, show_path, color_mode, Some(&names));
             for line in lines {
                 println!("{line}");
             }

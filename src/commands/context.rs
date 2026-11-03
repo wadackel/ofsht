@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use crate::color::ColorMode;
 use crate::commands::common::get_main_repo_root;
 use crate::config::Config;
+use crate::domain::worktree::worktree_root_from_template;
 use crate::integrations::git::{GitClient, RealGitClient};
 
 pub struct CommandContext {
@@ -71,6 +72,12 @@ impl CommandContext {
             git: RealGitClient,
             color_mode,
         })
+    }
+
+    /// The directory that `worktree.dir` places worktrees under.
+    #[must_use]
+    pub fn worktree_root(&self) -> Option<PathBuf> {
+        worktree_root_from_template(&self.config.worktree.dir, &self.repo_root)
     }
 
     /// Run `git worktree list --porcelain` from the main repository root and

@@ -3,8 +3,9 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
+use crate::commands::common::ambiguous_name_error;
 use crate::commands::context::CommandContext;
-use crate::domain::worktree::WorktreeList;
+use crate::domain::worktree::{NameResolution, WorktreeList};
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
 use crate::path_utils::normalize_absolute_path;
@@ -15,10 +16,12 @@ use crate::path_utils::normalize_absolute_path;
 /// Returns an error if:
 /// - Git worktree list command fails
 /// - Worktree not found
+/// - The name is shared by several worktrees outside the worktree root
 /// - Fzf is required but not available
 pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Result<()> {
     let ctx = CommandContext::new_lenient(color_mode)?;
     let stdout = ctx.worktree_list_stdout()?;
+    let root = ctx.worktree_root();
 
     // Resolve name: CLI arg > stdin (when piped) > fzf
     let resolved_name: Option<String> = match name {
@@ -36,7 +39,7 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
         }
 
         // Build items for fzf
-        let items = integrations::fzf::build_worktree_items(&stdout);
+        let items = integrations::fzf::build_worktree_items(&stdout, root.as_deref());
 
         if items.is_empty() {
             anyhow::bail!("No worktrees found");
@@ -56,51 +59,27 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
     };
     let name = name.as_str();
 
-    // Parse the porcelain output once and reuse the WorktreeList for all 3
-    // resolution passes (`@`, branch name, relative path, absolute path).
     let list = WorktreeList::parse(&stdout, None);
 
-    // Special handling for "@" (main worktree)
-    if name == "@" {
-        let main_path = list
-            .main()
-            .map(|m| m.path.as_str())
-            .context("git worktree list returned no entries")?;
-        println!("{}", normalize_absolute_path(&PathBuf::from(main_path)));
+    // "@" and the main worktree's branch: `find_by_branch` skips main because `rm` must not
+    // reach it, but `cd` has to.
+    let main_entry = list
+        .main()
+        .context("git worktree list returned no entries")?;
+    if name == "@" || main_entry.branch.as_deref() == Some(name) {
+        println!(
+            "{}",
+            normalize_absolute_path(&PathBuf::from(&main_entry.path))
+        );
         return Ok(());
     }
 
-    // Priority 1: Try to find by branch name
-    if let Some(entry) = list.find_by_branch(name) {
-        println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
-        return Ok(());
-    }
-
-    // Priority 2: Try to resolve as relative path. The lenient context always
-    // populates `ctx.config` (default fallback on parse error), so the previous
-    // config-presence gate is always true and has been dropped.
-    let worktree_paths: Vec<PathBuf> = list
-        .non_main()
-        .iter()
-        .map(|e| PathBuf::from(&e.path))
-        .collect();
-
-    if let Some(worktree_root) =
-        crate::domain::worktree::calculate_worktree_root_from_paths(&worktree_paths)
-    {
-        let abs_path = worktree_root.join(name);
-        if let Some(entry) = list.find_by_path(&abs_path) {
+    match list.resolve_name(name, root.as_deref()) {
+        NameResolution::Found(entry) => {
             println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
-            return Ok(());
+            Ok(())
         }
+        NameResolution::Ambiguous(entries) => Err(ambiguous_name_error(name, &entries)),
+        NameResolution::NotFound => anyhow::bail!("Worktree not found: {name}"),
     }
-
-    // Priority 3: Try to resolve as absolute path (fallback)
-    let input_path = PathBuf::from(name);
-    if let Some(entry) = list.find_by_path(&input_path) {
-        println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
-        return Ok(());
-    }
-
-    anyhow::bail!("Worktree not found: {name}");
 }

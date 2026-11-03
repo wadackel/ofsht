@@ -226,6 +226,64 @@ fn test_rm_completion_shows_worktrees_and_flags() {
 
 #[test]
 #[serial]
+fn test_cd_completion_shows_directory_name_of_outside_worktree() {
+    let repo = GitTestRepo::new();
+    repo.create_worktree("feature");
+    let nested = repo.dir.child("nested/deep/outside");
+    GitTestRepo::run_git(
+        &repo.dir,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            nested.path().to_str().unwrap(),
+        ],
+    );
+
+    let candidates = get_completions(&["cd", ""], repo.path());
+
+    assert!(
+        candidates.contains(&"outside".to_string()),
+        "Expected outside in candidates: {candidates:?}"
+    );
+    assert!(
+        !candidates.contains(&"nested/deep/outside".to_string()),
+        "Unexpected path below the common parent in candidates: {candidates:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn test_cd_completion_omits_name_shared_by_outside_worktrees() {
+    let repo = GitTestRepo::new();
+    for (branch, directory) in [("fix-a", "a/review"), ("fix-b", "b/review")] {
+        let worktree = repo.dir.child(directory);
+        GitTestRepo::run_git(
+            &repo.dir,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                worktree.path().to_str().unwrap(),
+            ],
+        );
+    }
+
+    let candidates = get_completions(&["cd", ""], repo.path());
+
+    assert!(
+        !candidates.contains(&"review".to_string()),
+        "Ambiguous name in candidates: {candidates:?}"
+    );
+    assert!(
+        candidates.contains(&"fix-a".to_string()),
+        "Expected branch name in candidates: {candidates:?}"
+    );
+}
+
+#[test]
+#[serial]
 fn test_rm_completion_shows_flags_with_dash() {
     let repo = GitTestRepo::new();
 

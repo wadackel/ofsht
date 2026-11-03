@@ -217,6 +217,10 @@ cd $(ofsht cd feature-awesome)
 
 # Interactive selection with fzf (when no branch name provided)
 ofsht cd
+
+# Back to the main worktree
+ofsht cd main
+ofsht cd @
 ```
 
 #### Remove a Worktree
@@ -253,6 +257,30 @@ ofsht rm --force-branch feature-awesome
 
 > [!NOTE]
 > `ofsht rm` can remove worktrees even if their directories have been manually deleted. Git marks such worktrees as "prunable" (still registered in Git but directory missing), and `ofsht` handles them gracefully by cleaning up the Git registration.
+
+#### Worktree Names
+
+`ofsht cd` and `ofsht rm` try these forms in order:
+
+| Form | Example |
+|---|---|
+| Branch name | `feature/login` |
+| Path below the directory set by `worktree.dir` | `wt1`, `feature/a` |
+| Directory name of a worktree outside that directory | `review` |
+| Absolute path, or a path relative to the current directory | `~/tmp/review`, `../myapp-worktrees/wt1` |
+
+`ofsht ls`, fzf, and shell completion show a name you can type for each worktree. When a worktree's short name would reach something else, `ofsht ls` and fzf show its path instead, and shell completion offers only its branch name.
+
+A worktree inside the `worktree.dir` directory wins over a worktree outside it with the same directory name. When only worktrees outside it share a directory name, the name is rejected:
+
+```text
+Error: Ambiguous worktree name: review
+  ~/tmp/a/review
+  ~/tmp/b/review
+Specify a branch name or a path
+```
+
+`ofsht cd` goes to the main worktree for `@` and for the main worktree's branch name. `ofsht rm` refuses both.
 
 ### Stdin Input
 
@@ -551,7 +579,7 @@ ofsht open --pane
 ofsht open --window
 ```
 
-The current worktree is automatically skipped (you're already there). Each window is named after the worktree directory name (e.g., `feature-login`, `docs·update`).
+The current worktree is automatically skipped (you're already there). Each window is named after the worktree's name from `ofsht ls` (e.g., `feature-login`, `docs·update`).
 
 **Configuration:**
 
@@ -594,8 +622,8 @@ source (COMPLETE=fish ofsht | psub)
 
 After setup, you'll get intelligent completions:
 - `ofsht add feature <TAB>` - When specifying a start point, lists branches, remote refs, and tags
-- `ofsht rm <TAB>` - Lists worktree names
-- `ofsht cd <TAB>` - Lists worktree names
+- `ofsht rm <TAB>` - Lists branch names and short worktree names
+- `ofsht cd <TAB>` - Lists branch names and short worktree names
 
 Global and subcommand flags are suggested only after the current word starts with `-` (e.g., `ofsht cd -<TAB>`).
 

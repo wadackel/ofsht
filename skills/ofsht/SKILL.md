@@ -42,7 +42,9 @@ Run `ofsht --help` or `ofsht <command> --help` when command details are uncertai
 - Print a worktree path for shell integration:
   ```bash
   ofsht cd feature-branch
+  ofsht cd main
   ```
+  `cd` and `rm` accept a branch name, the name shown by `ofsht ls`, or a path. `ofsht cd main` and `ofsht cd @` print the main worktree; `rm` refuses both. A directory name shared by several worktrees outside `worktree.dir` fails with `Ambiguous worktree name`; use the branch name or a path instead.
 - Remove explicit worktrees:
   ```bash
   ofsht rm feature-branch
