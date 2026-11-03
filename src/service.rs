@@ -2,9 +2,12 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::domain::worktree::expand_worktree_path;
+use crate::domain::worktree::{
+    expand_worktree_path, locked_paths, worktree_root_from_template, WorktreeList,
+};
 use crate::integrations::git::{GitClient, RemoteTracking};
 use crate::integrations::zoxide::ZoxideClient;
+use crate::path_utils::canonicalize_allow_missing;
 
 /// Request describing where and how to create a worktree.
 ///
@@ -58,21 +61,24 @@ where
         let worktree_path = expand_worktree_path(req.path_template, req.repo_root, req.branch)
             .context("Failed to get repository name")?;
 
-        if req.start_point.is_none()
-            && !self
+        if req.start_point.is_none() {
+            if self
                 .git_client
                 .branch_exists(req.branch, Some(req.repo_root))?
-        {
-            match self.git_client.remote_tracking(req.branch, Some(req.repo_root)) {
-                Some(RemoteTracking::Branch(branch)) => anyhow::bail!(
-                    "{name} is a remote-tracking branch; use 'ofsht add {branch} {name}' to track it",
-                    name = req.branch
-                ),
-                Some(RemoteTracking::Symbolic) => anyhow::bail!(
-                    "{} is a symbolic remote ref, not a branch name",
-                    req.branch
-                ),
-                None => {}
+            {
+                self.refuse_branch_in_use(req)?;
+            } else {
+                match self.git_client.remote_tracking(req.branch, Some(req.repo_root)) {
+                    Some(RemoteTracking::Branch(branch)) => anyhow::bail!(
+                        "{name} is a remote-tracking branch; use 'ofsht add {branch} {name}' to track it",
+                        name = req.branch
+                    ),
+                    Some(RemoteTracking::Symbolic) => anyhow::bail!(
+                        "{} is a symbolic remote ref, not a branch name",
+                        req.branch
+                    ),
+                    None => {}
+                }
             }
         }
 
@@ -90,6 +96,47 @@ where
         }
 
         Ok(worktree_path)
+    }
+
+    /// Fail before `git worktree add` when another worktree has `req.branch` checked out,
+    /// naming that worktree and what to run instead
+    fn refuse_branch_in_use(&self, req: &CreateWorktreeRequest<'_>) -> Result<()> {
+        let porcelain = self.git_client.list_worktrees(Some(req.repo_root))?;
+        let list = WorktreeList::parse(&porcelain, None);
+        let Some(entry) = list
+            .entries()
+            .iter()
+            .find(|entry| entry.branch.as_deref() == Some(req.branch))
+        else {
+            return Ok(());
+        };
+        let path = Path::new(&entry.path);
+        if !path.exists() {
+            let canonical = canonicalize_allow_missing(path);
+            let locked = locked_paths(&porcelain)
+                .iter()
+                .any(|locked| canonicalize_allow_missing(Path::new(locked)) == canonical);
+            let fix = if locked {
+                format!(
+                    "git worktree unlock {}, then git worktree prune",
+                    entry.path
+                )
+            } else {
+                "git worktree prune".to_string()
+            };
+            anyhow::bail!(
+                "Branch {} is checked out in a missing worktree at {}. Run: {fix}",
+                req.branch,
+                entry.path
+            );
+        }
+        let root = worktree_root_from_template(req.path_template, req.repo_root);
+        anyhow::bail!(
+            "Branch {} is already checked out in {}. Use: ofsht cd {}",
+            req.branch,
+            list.display_name(entry, root.as_deref()),
+            list.cd_name(entry, root.as_deref())
+        );
     }
 }
 
