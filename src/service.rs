@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::domain::worktree::expand_worktree_path;
-use crate::integrations::git::GitClient;
+use crate::integrations::git::{GitClient, RemoteTracking};
 use crate::integrations::zoxide::ZoxideClient;
 
 /// Request describing where and how to create a worktree.
@@ -57,6 +57,24 @@ where
     {
         let worktree_path = expand_worktree_path(req.path_template, req.repo_root, req.branch)
             .context("Failed to get repository name")?;
+
+        if req.start_point.is_none()
+            && !self
+                .git_client
+                .branch_exists(req.branch, Some(req.repo_root))?
+        {
+            match self.git_client.remote_tracking(req.branch, Some(req.repo_root)) {
+                Some(RemoteTracking::Branch(branch)) => anyhow::bail!(
+                    "{name} is a remote-tracking branch; use 'ofsht add {branch} {name}' to track it",
+                    name = req.branch
+                ),
+                Some(RemoteTracking::Symbolic) => anyhow::bail!(
+                    "{} is a symbolic remote ref, not a branch name",
+                    req.branch
+                ),
+                None => {}
+            }
+        }
 
         self.git_client.create_worktree(
             req.branch,

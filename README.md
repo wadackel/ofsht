@@ -189,9 +189,15 @@ ofsht add feature-awesome develop     # From branch
 ofsht add hotfix-123 origin/main      # From remote branch
 ofsht add release-prep v1.2.0         # From tag
 
+# Work on a remote branch locally: a local branch tracking it
+ofsht add feature-x origin/feature-x
+
 # Create with tmux integration (requires running inside tmux)
 ofsht add feature-awesome --tmux      # Creates worktree and opens new tmux window
 ```
+
+> [!NOTE]
+> The first argument is always a local branch name: an existing local branch is checked out, and any other name, including one that matches a tag or a commit, becomes a new branch. A remote-tracking name such as `origin/feature-x` is refused with the command to use instead, `ofsht add feature-x origin/feature-x`.
 
 #### List Worktrees
 
@@ -639,6 +645,7 @@ source (COMPLETE=fish ofsht | psub)
 ```
 
 After setup, you'll get intelligent completions:
+- `ofsht add <TAB>` - Lists local branches
 - `ofsht add feature <TAB>` - When specifying a start point, lists branches, remote refs, and tags
 - `ofsht rm <TAB>` - Lists branch names and short worktree names
 - `ofsht cd <TAB>` - Lists branch names and short worktree names

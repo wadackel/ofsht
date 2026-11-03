@@ -334,3 +334,25 @@ fn test_rm_completion_shows_flags_with_dash() {
         "Should contain flags in candidates: {candidates:?}"
     );
 }
+
+#[test]
+#[serial]
+fn test_add_branch_completion_offers_local_branches_only() {
+    let repo = GitTestRepo::new();
+    GitTestRepo::run_git(
+        &repo.dir,
+        &["update-ref", "refs/remotes/origin/foo", "HEAD"],
+    );
+
+    let branches = get_completions(&["add", ""], repo.path());
+    assert!(
+        !branches.contains(&"origin/foo".to_string()),
+        "Remote-tracking branch offered as a branch name: {branches:?}"
+    );
+
+    let start_points = get_completions(&["add", "new-branch", ""], repo.path());
+    assert!(
+        start_points.contains(&"origin/foo".to_string()),
+        "Remote-tracking branch missing from start points: {start_points:?}"
+    );
+}

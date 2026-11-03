@@ -165,20 +165,15 @@ pub fn list_git_refs(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// List Git branches for completion
+/// List local Git branches for completion of a new worktree's branch name
 ///
 /// Returns empty Vec if git command fails (e.g., not in a git repository)
-/// Includes both local and remote branches
 /// Filters branches by the provided prefix
-/// Excludes symbolic refs like origin/HEAD
 #[must_use]
 pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
     let git = RealGitClient;
-    let Ok(stdout) = git.for_each_ref(
-        &["refs/heads", "refs/remotes"],
-        "%(refname:short)%09%(symref)",
-        None,
-    ) else {
+    // Local branches only: `add` refuses a remote-tracking name, which the start point takes
+    let Ok(stdout) = git.for_each_ref(&["refs/heads"], "%(refname:short)", None) else {
         return Vec::new();
     };
 
@@ -186,23 +181,9 @@ pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
 
     stdout
         .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split('\t').collect();
-            let refname = parts.first()?.trim();
-            let symref = parts.get(1).map_or("", |s| s.trim());
-
-            // Filter out symbolic refs (symref column is non-empty)
-            if !symref.is_empty() {
-                return None;
-            }
-
-            // Filter by prefix
-            if !refname.starts_with(&*prefix) {
-                return None;
-            }
-
-            Some(CompletionCandidate::new(refname))
-        })
+        .map(str::trim)
+        .filter(|refname| refname.starts_with(&*prefix))
+        .map(CompletionCandidate::new)
         .collect()
 }
 
