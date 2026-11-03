@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::color;
 use crate::commands::common::{current_worktree_toplevel, resolve_worktree_target};
 use crate::commands::context::CommandContext;
-use crate::domain::worktree::{branch_from_template, locked_paths, WorktreeList};
+use crate::domain::worktree::{branch_from_template, detached_heads, locked_paths, WorktreeList};
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
@@ -169,11 +169,21 @@ fn preflight(
     git: &impl GitClient,
     paths: &[&std::path::Path],
     list_stdout: &str,
+    repo_root: &std::path::Path,
     force: bool,
 ) -> Vec<(std::path::PathBuf, String)> {
     let locked: Vec<std::path::PathBuf> = locked_paths(list_stdout)
         .iter()
         .map(|path| canonicalize_allow_missing(std::path::Path::new(path)))
+        .collect();
+    let detached: Vec<(std::path::PathBuf, String)> = detached_heads(list_stdout)
+        .into_iter()
+        .map(|(path, head)| {
+            (
+                canonicalize_allow_missing(std::path::Path::new(&path)),
+                head,
+            )
+        })
         .collect();
     let mut refused = Vec::new();
     for path in paths {
@@ -224,10 +234,68 @@ fn preflight(
                         "contains initialized submodules (use --force)".to_string(),
                     ));
                 }
+                for reason in unrecoverable_work(git, path, &detached, repo_root) {
+                    refused.push((path.to_path_buf(), reason));
+                }
             }
         }
     }
     refused
+}
+
+/// Work that removing `path` would lose for good: commits only its detached HEAD reaches, and
+/// an operation in progress in its git directory
+fn unrecoverable_work(
+    git: &impl GitClient,
+    path: &std::path::Path,
+    detached: &[(std::path::PathBuf, String)],
+    repo_root: &std::path::Path,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    let canonical = canonicalize_allow_missing(path);
+    if let Some((_, head)) = detached.iter().find(|(p, _)| *p == canonical) {
+        // From the repository root: the target's own refs (refs/worktree, refs/bisect) go with it
+        match git.run(
+            &["for-each-ref", "--contains", head, "--count=1", "refs/"],
+            Some(repo_root),
+        ) {
+            Ok(refs) if refs.trim().is_empty() => reasons.push(
+                "has commits on a detached HEAD that no branch or tag contains (use --force to discard them)"
+                    .to_string(),
+            ),
+            Ok(_) => {}
+            Err(e) => reasons.push(format!("cannot check: {}", e.to_string().trim_end())),
+        }
+    }
+    match git.run(&["rev-parse", "--absolute-git-dir"], Some(path)) {
+        Ok(git_dir) => {
+            let git_dir = std::path::Path::new(git_dir.trim());
+            let has = |name: &str| git_dir.join(name).exists();
+            let operation = if has("rebase-merge") || has("rebase-apply") {
+                Some("rebase")
+            } else if has("MERGE_HEAD") {
+                Some("merge")
+            } else if has("CHERRY_PICK_HEAD") {
+                Some("cherry-pick")
+            } else if has("REVERT_HEAD") {
+                Some("revert")
+            } else if has("BISECT_LOG") {
+                Some("bisect")
+            } else if has("sequencer") {
+                // A resolved multi-commit cherry-pick or revert leaves only the sequencer
+                Some("cherry-pick or revert")
+            } else {
+                None
+            };
+            if let Some(operation) = operation {
+                reasons.push(format!(
+                    "has a {operation} in progress (use --force to abandon it)"
+                ));
+            }
+        }
+        Err(e) => reasons.push(format!("cannot check: {}", e.to_string().trim_end())),
+    }
+    reasons
 }
 
 /// Remove one or multiple worktrees
@@ -361,7 +429,7 @@ pub fn cmd_rm_many(
         .chain(current_removal.iter())
         .map(|(_, path, _)| path.as_path())
         .collect();
-    let refused = preflight(&ctx.git, &paths, &list_stdout, force);
+    let refused = preflight(&ctx.git, &paths, &list_stdout, &ctx.repo_root, force);
     if !refused.is_empty() {
         let lines: Vec<String> = refused
             .iter()
