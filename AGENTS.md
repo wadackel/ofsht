@@ -228,7 +228,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **sync.rs** (`cmd_sync`): Re-apply `hooks.create` to all existing non-main worktrees with `--run`/`--copy`/`--link` filtering
 
 **Key Shared Functions** (in `commands/common.rs`):
-- `get_main_repo_root()`: Find main repo using `git rev-parse --git-common-dir`
+- `get_main_repo_root()`: Find the main worktree: `--show-toplevel` from the main worktree, otherwise the directory whose `.git` leads to the common git directory; bare repositories without one and linked worktrees of `--separate-git-dir` repositories fail
 - `resolve_worktree_target()`: Resolve a removal target (`.`, branch name, worktree name, or path) to a canonical worktree path
 - `ambiguous_name_error()`: Error listing the worktrees a name matches, with their branches
 - `parse_all_worktrees()`: Parse `git worktree list --porcelain` output
