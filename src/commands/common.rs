@@ -9,16 +9,30 @@ use crate::domain::worktree::{NameResolution, WorktreeEntry, WorktreeList};
 use crate::integrations::git::{GitClient, RealGitClient};
 use crate::path_utils::{canonicalize_allow_missing, display_path};
 
+/// The git directory that `<dir>/.git` leads to: the directory itself, or a gitfile's target
+fn git_dir_at(dir: &Path) -> Option<PathBuf> {
+    let dot_git = dir.join(".git");
+    if dot_git.is_dir() {
+        return Some(canonicalize_allow_missing(&dot_git));
+    }
+    let content = std::fs::read_to_string(&dot_git).ok()?;
+    let target = content
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir: "))?;
+    Some(canonicalize_allow_missing(&dir.join(target.trim())))
+}
+
 /// Get the main worktree's root path
 ///
-/// From the main worktree itself this is its toplevel, whatever the `.git` layout. From a
-/// linked worktree it is the parent of the common `.git` directory, which only the standard
-/// layout can tell.
+/// From the main worktree itself this is its toplevel, whatever the `.git` layout. Otherwise
+/// it is the directory whose `.git` leads to the common git directory, which covers linked
+/// worktrees of the standard layout and bare repositories kept as `<root>/.git` or behind a
+/// `<root>/.git` gitfile.
 ///
 /// # Errors
 /// Returns an error if:
 /// - Not in a git repository
-/// - The repository is bare
+/// - The repository is bare with no such directory
 /// - The main worktree cannot be located (a linked worktree of a `--separate-git-dir` repository)
 pub fn get_main_repo_root() -> Result<PathBuf> {
     let git = RealGitClient;
@@ -33,6 +47,10 @@ pub fn get_main_repo_root() -> Result<PathBuf> {
     let absolute = |path: &str| canonicalize_allow_missing(&cwd.join(path.trim()));
     let common_dir = absolute(&common);
 
+    let parent_root = common_dir
+        .parent()
+        .filter(|parent| git_dir_at(parent).as_deref() == Some(common_dir.as_path()));
+
     let porcelain = git.list_worktrees(None)?;
     let first_block = porcelain.split("\n\n").next().unwrap_or_default();
     if first_block.lines().any(|line| line == "bare") {
@@ -40,25 +58,28 @@ pub fn get_main_repo_root() -> Result<PathBuf> {
             .lines()
             .find_map(|line| line.strip_prefix("worktree "))
             .unwrap_or_default();
-        anyhow::bail!("Bare repositories are not supported: {path}");
+        return parent_root.map(Path::to_path_buf).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Bare repositories are not supported unless kept as <root>/.git or behind a <root>/.git file: {path}"
+            )
+        });
     }
 
     let in_main_worktree = git
         .rev_parse(&["rev-parse", "--git-dir"], None)
         .is_ok_and(|git_dir| absolute(&git_dir) == common_dir);
     if in_main_worktree {
-        // Inside the `.git` directory itself there is no toplevel; the parent rule below applies
+        // Inside the `.git` directory itself there is no toplevel (older git prints an empty
+        // one); the parent rule below applies
         if let Ok(toplevel) = git.rev_parse(&["rev-parse", "--show-toplevel"], None) {
-            return Ok(canonicalize_allow_missing(Path::new(toplevel.trim())));
+            if !toplevel.trim().is_empty() {
+                return Ok(canonicalize_allow_missing(Path::new(toplevel.trim())));
+            }
         }
     }
 
-    if common_dir.file_name().is_some_and(|name| name == ".git") {
-        if let Some(parent) = common_dir.parent() {
-            if canonicalize_allow_missing(&parent.join(".git")) == common_dir {
-                return Ok(parent.to_path_buf());
-            }
-        }
+    if let Some(parent) = parent_root {
+        return Ok(parent.to_path_buf());
     }
 
     anyhow::bail!(

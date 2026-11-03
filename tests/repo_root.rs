@@ -391,3 +391,52 @@ fn init_local_in_bare_repository_fails() {
     assert!(!bare.join(".ofsht.toml").exists());
     assert!(!temp.path().join(".ofsht.toml").exists());
 }
+
+#[test]
+fn bare_repository_behind_gitfile_uses_parent_as_root() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let seed = temp.path().join("seed");
+    init_with_commit(&seed, &[]);
+    let project = temp.path().join("proj");
+    std::fs::create_dir_all(&project).unwrap();
+    git(
+        &project,
+        &["clone", "-q", "--bare", seed.to_str().unwrap(), ".bare"],
+    );
+    std::fs::write(project.join(".git"), "gitdir: ./.bare\n").unwrap();
+    git(&project, &["worktree", "add", "-q", "main", "main"]);
+
+    for dir in [project.clone(), project.join("main")] {
+        ofsht_isolated(&dir, &home).arg("ls").assert().success();
+    }
+    ofsht_isolated(&project.join("main"), &home)
+        .args(["create", "slot-1"])
+        .assert()
+        .success();
+    assert!(temp.path().join("proj-worktrees/slot-1").exists());
+}
+
+#[test]
+fn bare_repository_as_dot_git_uses_parent_as_root() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let seed = temp.path().join("seed");
+    init_with_commit(&seed, &[]);
+    let project = temp.path().join("proj");
+    std::fs::create_dir_all(&project).unwrap();
+    git(
+        &project,
+        &["clone", "-q", "--bare", seed.to_str().unwrap(), ".git"],
+    );
+    git(
+        &project.join(".git"),
+        &["worktree", "add", "-q", "../main", "main"],
+    );
+
+    ofsht_isolated(&project.join("main"), &home)
+        .args(["create", "slot-1"])
+        .assert()
+        .success();
+    assert!(temp.path().join("proj-worktrees/slot-1").exists());
+}

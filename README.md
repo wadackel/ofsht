@@ -28,6 +28,7 @@ A command-line tool for managing Git worktrees with automation features.
   - [Sync Hook Operations](#sync-hook-operations)
   - [GitHub Integration](#github-integration)
   - [Shell Integration](#shell-integration)
+  - [Repository Layouts](#repository-layouts)
   - [Configuration](#configuration)
   - [zoxide Integration](#zoxide-integration)
   - [tmux Integration](#tmux-integration)
@@ -353,8 +354,18 @@ ofsht create feature-awesome
 > [!CAUTION]
 > The shell wrapper only works in interactive shells. You must add the `eval "$(ofsht shell-init <shell>)"` line to your shell's rc file (`~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish`) and reload it. The wrapper will not work in non-interactive scripts.
 
-> [!NOTE]
-> Bare repositories are not supported. In a repository created with `git init --separate-git-dir`, run `ofsht` from the main worktree: from a linked worktree, git has no record of where the main worktree is, so `ofsht` stops with `Cannot locate the main worktree`. If that separate git directory is itself named `.git`, a linked worktree cannot tell it apart from the standard layout.
+### Repository Layouts
+
+`ofsht` treats the main worktree's directory as the repository root: it reads `.ofsht.toml` there and resolves `worktree.dir` from it.
+
+| Layout | Root |
+|---|---|
+| Standard (`<root>/.git`) | `<root>`, from the main worktree or any linked worktree |
+| Bare repository kept as `<root>/.git`, or behind a `<root>/.git` file such as `gitdir: ./.bare` | `<root>` |
+| `git init --separate-git-dir` | The work tree, when run from it |
+| Other bare repositories | Not supported: `Bare repositories are not supported` |
+
+From a linked worktree of a `--separate-git-dir` repository, git has no record of the main worktree, so `ofsht` stops with `Cannot locate the main worktree`; run it from the main worktree. If that separate git directory is itself named `.git`, a linked worktree cannot tell it apart from the standard layout, and `ofsht` treats the directory containing it as the root.
 
 ### Configuration
 
