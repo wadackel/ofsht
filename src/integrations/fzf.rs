@@ -8,6 +8,35 @@ use std::process::{Command, Stdio};
 use crate::domain::worktree::WorktreeList;
 use crate::path_utils::display_path;
 
+const PREVIEW_COMMAND: &str = r#"sh -c 'p=$(printf "%b/." "$1"); git -C "$p" status --short --branch; printf "\n"; git -C "$p" log --oneline -n 10' sh {2}"#;
+
+fn encode_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len() * 5);
+    for byte in path.bytes() {
+        encoded.push_str("\\0");
+        encoded.push(char::from(b'0' + (byte >> 6)));
+        encoded.push(char::from(b'0' + ((byte >> 3) & 7)));
+        encoded.push(char::from(b'0' + (byte & 7)));
+    }
+    encoded
+}
+
+fn supports_accept_nth() -> Result<bool> {
+    let output = Command::new("fzf")
+        .arg("--help")
+        .env_remove("FZF_DEFAULT_OPTS")
+        .env_remove("FZF_DEFAULT_OPTS_FILE")
+        .output()
+        .context("Failed to inspect fzf options")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "fzf --help failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).contains("--accept-nth"))
+}
+
 /// Item to display in fzf
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FzfItem {
@@ -40,12 +69,13 @@ impl FzfPicker for RealFzfPicker {
             return Ok(Vec::new());
         }
 
-        // Build input for fzf (display strings)
-        let input = items
+        // Display text can contain whitespace and duplicate labels; it cannot identify a selection.
+        let records = items
             .iter()
-            .map(|item| item.display.clone())
-            .collect::<Vec<_>>()
-            .join("\n");
+            .enumerate()
+            .map(|(index, item)| format!("{index}\t{}\t{}", encode_path(&item.value), item.display))
+            .collect::<Vec<_>>();
+        let input = records.join("\0") + "\0";
 
         // Build fzf command
         let mut cmd = Command::new("fzf");
@@ -60,12 +90,22 @@ impl FzfPicker for RealFzfPicker {
             cmd.arg(opt);
         }
 
-        // Add preview command to show git log for each worktree
-        // Extract the last field (path) and expand ~ to $HOME
-        // Use % as placeholder to avoid conflicts with fzf's {}
-        let preview_cmd =
-            "echo {} | awk '{print $NF}' | sed \"s|^~|$HOME|\" | xargs -I % git -C % log --oneline -n 10 2>/dev/null";
-        cmd.arg("--preview").arg(preview_cmd);
+        // Raw paths would split metadata fields; printf decodes the quoted octal argument as data.
+        cmd.args([
+            "--read0",
+            "--print0",
+            "--no-print-query",
+            "--delimiter",
+            "\t",
+            "--with-nth",
+            "3..",
+            "--nth",
+            "1..",
+        ]);
+        if supports_accept_nth()? {
+            cmd.arg("--accept-nth=1..");
+        }
+        cmd.arg("--preview").arg(PREVIEW_COMMAND);
 
         // Add some default options for better UX
         cmd.arg("--height=50%")
@@ -94,19 +134,15 @@ impl FzfPicker for RealFzfPicker {
         // Handle exit codes
         match output.status.code() {
             Some(0) => {
-                // Success - parse selected items
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let selected_displays: Vec<&str> = stdout.lines().collect();
-
-                // Map selected display strings back to values
-                let mut results = Vec::new();
-                for display in selected_displays {
-                    if let Some(item) = items.iter().find(|item| item.display == display) {
-                        results.push(item.value.clone());
-                    }
-                }
-
-                Ok(results)
+                Ok(stdout
+                    .split('\0')
+                    .filter_map(|record| {
+                        let (index, _) = record.split_once('\t')?;
+                        let index: usize = index.parse().ok()?;
+                        (records.get(index)?.as_str() == record).then(|| items[index].value.clone())
+                    })
+                    .collect())
             }
             Some(130 | 1) => {
                 // User pressed Esc or no selection - not an error
@@ -203,6 +239,173 @@ pub fn build_worktree_items(porcelain_output: &str, root: Option<&Path>) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn real_picker_preserves_duplicate_displays_and_unusual_values() {
+        temp_env::with_vars(
+            [
+                ("FZF_DEFAULT_OPTS", None::<&str>),
+                ("FZF_DEFAULT_OPTS_FILE", None),
+            ],
+            || {
+                let items = vec![
+                    FzfItem {
+                        display: "same display".to_string(),
+                        value: "/tmp/space path".to_string(),
+                    },
+                    FzfItem {
+                        display: "same display".to_string(),
+                        value: "/tmp/日本語\ttab\n".to_string(),
+                    },
+                ];
+                let picker = RealFzfPicker::new(vec!["--filter=same".to_string()]);
+                assert_eq!(
+                    picker.pick(&items, true).unwrap(),
+                    items
+                        .iter()
+                        .map(|item| item.value.clone())
+                        .collect::<Vec<_>>()
+                );
+                let picker = RealFzfPicker::new(vec!["--filter=no-match".to_string()]);
+                assert!(picker.pick(&items, false).unwrap().is_empty());
+            },
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn real_picker_owns_protocol_despite_config_and_environment_options() {
+        let options_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            options_file.path(),
+            "--print-query --read0 --print0 --with-nth=1\n",
+        )
+        .unwrap();
+        temp_env::with_vars(
+            [
+                (
+                    "FZF_DEFAULT_OPTS",
+                    Some("--delimiter=: --with-nth=1 --nth=2.. --print-query"),
+                ),
+                ("FZF_DEFAULT_OPTS_FILE", options_file.path().to_str()),
+            ],
+            || {
+                let items = [FzfItem {
+                    display: "chosen display".to_string(),
+                    value: "/tmp/value".to_string(),
+                }];
+                let mut options = vec![
+                    "--filter=chosen".to_string(),
+                    "--with-nth=1".to_string(),
+                    "--print-query".to_string(),
+                ];
+                let help = Command::new("fzf")
+                    .arg("--help")
+                    .env_remove("FZF_DEFAULT_OPTS")
+                    .env_remove("FZF_DEFAULT_OPTS_FILE")
+                    .output()
+                    .unwrap();
+                if String::from_utf8_lossy(&help.stdout).contains("--accept-nth") {
+                    options.push("--accept-nth=3..".to_string());
+                }
+                let picker = RealFzfPicker::new(options);
+                assert_eq!(picker.pick(&items, false).unwrap(), vec!["/tmp/value"]);
+            },
+        );
+    }
+
+    #[test]
+    fn preview_preserves_path_data_and_shows_status_before_history() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["space path", "日本語 'quote' $(touch CODE_EXECUTED)\ttab\n"] {
+            let repo = temp.path().join(name);
+            std::fs::create_dir(&repo).unwrap();
+            for args in [
+                vec!["init", "-qb", "main"],
+                vec!["commit", "--allow-empty", "-qm", "history-marker"],
+            ] {
+                let out = Command::new("git")
+                    .args(args)
+                    .current_dir(&repo)
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .env("GIT_AUTHOR_NAME", "t")
+                    .env("GIT_AUTHOR_EMAIL", "t@t")
+                    .env("GIT_COMMITTER_NAME", "t")
+                    .env("GIT_COMMITTER_EMAIL", "t@t")
+                    .output()
+                    .unwrap();
+                assert!(
+                    out.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            std::fs::write(repo.join("dirty-marker"), "dirty").unwrap();
+            let path = repo.to_str().unwrap();
+            let encoded = encode_path(path);
+            let display = format!("slot · [main] · {path}");
+            let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+            let command = PREVIEW_COMMAND
+                .replace("{}", &quote(&display))
+                .replace("{2}", &quote(&encoded));
+            let out = Command::new("sh")
+                .args(["-c", &command])
+                .current_dir(temp.path())
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(stdout.contains("dirty-marker"), "{stdout}");
+            assert!(stdout.contains("history-marker"), "{stdout}");
+            assert!(stdout.find("dirty-marker").unwrap() < stdout.find("history-marker").unwrap());
+            assert!(!temp.path().join("CODE_EXECUTED").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn old_picker_without_accept_nth_and_cancel_are_supported() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let stub = temp.path().join("fzf");
+        std::fs::write(&stub, "#!/bin/sh\n[ \"$1\" = --help ] && echo '--read0 --print0' && exit 0\ncancel=0\nfor arg do\n [ \"$arg\" = --accept-nth=1.. ] && exit 2\n [ \"$arg\" = --cancel ] && cancel=1\ndone\nif [ \"$cancel\" = 1 ]; then cat >/dev/null; exit 130; fi\ncat\n").unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            temp.path().display(),
+            std::env::var("PATH").unwrap()
+        );
+        temp_env::with_vars(
+            [
+                ("PATH", Some(path.as_str())),
+                ("FZF_DEFAULT_OPTS", None),
+                ("FZF_DEFAULT_OPTS_FILE", None),
+            ],
+            || {
+                let items = [FzfItem {
+                    display: "label".to_string(),
+                    value: "/tmp/path".to_string(),
+                }];
+                assert_eq!(
+                    RealFzfPicker::new(vec![]).pick(&items, false).unwrap(),
+                    vec!["/tmp/path"]
+                );
+                assert!(RealFzfPicker::new(vec!["--cancel".to_string()])
+                    .pick(&items, true)
+                    .unwrap()
+                    .is_empty());
+            },
+        );
+    }
 
     struct MockFzfPicker {
         return_values: Vec<String>,

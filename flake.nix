@@ -51,6 +51,7 @@
         devShells.default = craneLib.devShell {
           inputsFrom = [ ofsht ];
           packages = with pkgs; [
+            fzf
             just
             vhs
             uv

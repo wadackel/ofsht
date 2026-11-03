@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashSet;
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use crate::color;
@@ -444,6 +445,9 @@ pub fn cmd_rm_many(
     let targets: Vec<String> = if targets.is_empty() {
         let stdin_targets = crate::stdin::try_read_stdin_lines()?;
         if stdin_targets.is_empty() {
+            if !std::io::stdin().is_terminal() {
+                anyhow::bail!("at least one target required (provide as argument or via stdin)");
+            }
             if !ctx.config.integrations.fzf.enabled {
                 anyhow::bail!("Provide at least one target or enable fzf in config");
             }
