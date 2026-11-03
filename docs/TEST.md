@@ -172,6 +172,40 @@ cd $(ofsht cd feature-awesome)
 pwd
 ```
 
+#### 4-1. Worktree Names
+
+```bash
+cd /tmp/demo-ofsht
+
+# A worktree whose directory name differs from its branch, and one outside worktree.dir
+git worktree add -b feature/login ../demo-ofsht-worktrees/wt1
+git worktree add -b fix/typo /private/tmp/demo-ofsht-outside/review
+
+# Expected names: wt1 and review, regardless of the outside worktree
+ofsht ls --show-path
+
+# Each prints the worktree path
+ofsht cd feature/login
+ofsht cd wt1
+ofsht cd review
+ofsht cd /private/tmp/demo-ofsht-outside/review
+
+# Prints the main worktree path
+ofsht cd main
+
+# Expected: Error: Cannot remove main worktree
+ofsht rm main
+
+# Two worktrees outside worktree.dir with the same directory name
+git worktree add -b fix/other /private/tmp/demo-ofsht-outside2/review
+
+# Expected: Error: Ambiguous worktree name: review, followed by both paths
+ofsht cd review
+
+# Clean up
+ofsht rm wt1 fix/typo fix/other
+```
+
 ### 5. Remove Worktree (`ofsht rm`)
 
 Create another worktree before removing:
@@ -589,6 +623,7 @@ After verification is complete, clean up test directories:
 # Remove test directories
 rm -rf /tmp/demo-ofsht
 rm -rf /tmp/demo-ofsht-worktrees
+rm -rf /tmp/demo-ofsht-outside /tmp/demo-ofsht-outside2
 rm -rf ~/demo-ofsht-worktrees
 
 # Remove global config (if needed)
@@ -800,6 +835,7 @@ test -f "$tmp/ofsht/SKILL.md"
 This document verified the following features:
 
 - ✅ Basic operations (add, ls, cd, rm)
+- ✅ Worktree names (branch, name below worktree.dir, outside directory name, path)
 - ✅ Branch deletion modes for rm (safe default, `--keep-branch`, `--force-branch`)
 - ✅ Hook functionality (create, delete)
 - ✅ File copying and symlink creation

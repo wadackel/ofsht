@@ -7,16 +7,14 @@ use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 
 use crate::color;
-use crate::domain::worktree::{
-    calculate_relative_path, calculate_worktree_root_from_paths, WorktreeEntry,
-};
+use crate::domain::worktree::WorktreeEntry;
 use crate::path_utils::display_path;
 
 /// Worktree display information including commit time
 struct WorktreeDisplay {
     path: Option<String>,
     hash: String,
-    rel_path: Option<String>,
+    name: Option<String>,
     branch: String,
     timestamp: String,
     is_active: bool,
@@ -25,9 +23,11 @@ struct WorktreeDisplay {
 /// Format worktree entries as a table with aligned columns
 ///
 /// Returns formatted lines ready for display
-/// If `show_path` is false and `config` is None: hash • branch • time
-/// If `show_path` is false and `config` is Some: hash • `rel_path` • branch • time
-/// If `show_path` is true: path • hash • `rel_path` • branch • time
+/// If `show_path` is false and `names` is None: hash • branch • time
+/// If `show_path` is false and `names` is Some: hash • name • branch • time
+/// If `show_path` is true: path • hash • name • branch • time
+///
+/// `names` follows the order of `entries`; the main worktree's name is left blank.
 ///
 /// # Panics
 /// Panics if entries and `commit_times` have different lengths
@@ -38,7 +38,7 @@ pub fn format_worktree_table(
     commit_times: &[Option<DateTime<Utc>>],
     show_path: bool,
     color_mode: color::ColorMode,
-    config: Option<&crate::config::Config>,
+    names: Option<&[String]>,
 ) -> Vec<String> {
     assert_eq!(
         entries.len(),
@@ -48,18 +48,6 @@ pub fn format_worktree_table(
 
     let now = Utc::now();
     let mut displays: Vec<WorktreeDisplay> = Vec::new();
-
-    // Calculate worktree root if config is provided
-    // Collect all non-main worktree paths (skip index 0 which is main worktree)
-    let worktree_root = config.and_then(|_cfg| {
-        let non_main_paths: Vec<std::path::PathBuf> = entries
-            .iter()
-            .skip(1)
-            .map(|entry| std::path::PathBuf::from(&entry.path))
-            .collect();
-
-        calculate_worktree_root_from_paths(&non_main_paths)
-    });
 
     // Build display data
     for (index, (entry, commit_time)) in entries.iter().zip(commit_times.iter()).enumerate() {
@@ -73,13 +61,10 @@ pub fn format_worktree_table(
             .clone()
             .unwrap_or_else(|| "(unknown)".to_string());
 
-        // Calculate relative path for non-main worktrees
-        let rel_path = if index != 0 {
-            worktree_root.as_ref().and_then(|root| {
-                calculate_relative_path(&std::path::PathBuf::from(&entry.path), root)
-            })
-        } else {
+        let name = if index == 0 {
             None
+        } else {
+            names.and_then(|names| names.get(index).cloned())
         };
 
         // Main worktree (index 0) is always displayed as "@"
@@ -102,7 +87,7 @@ pub fn format_worktree_table(
         displays.push(WorktreeDisplay {
             path,
             hash,
-            rel_path,
+            name,
             branch,
             timestamp,
             is_active: entry.is_active,
@@ -120,9 +105,9 @@ pub fn format_worktree_table(
         0
     };
     let max_hash_width = displays.iter().map(|d| d.hash.len()).max().unwrap_or(0);
-    let max_rel_path_width = displays
+    let max_name_width = displays
         .iter()
-        .filter_map(|d| d.rel_path.as_ref().map(std::string::String::len))
+        .filter_map(|d| d.name.as_ref().map(std::string::String::len))
         .max()
         .unwrap_or(0);
     let max_branch_width = displays.iter().map(|d| d.branch.len()).max().unwrap_or(0);
@@ -161,21 +146,20 @@ pub fn format_worktree_table(
                 let path_padding =
                     " ".repeat(max_path_width.saturating_sub(colored_path.len()));
 
-                // Format relative path with padding
-                let rel_path_str = d.rel_path.as_deref().unwrap_or("");
-                let rel_path_padding =
-                    " ".repeat(max_rel_path_width.saturating_sub(rel_path_str.len()));
+                // Format name with padding
+                let name_str = d.name.as_deref().unwrap_or("");
+                let name_padding =
+                    " ".repeat(max_name_width.saturating_sub(name_str.len()));
 
-                format!("{marker} {colored_path}{path_padding}  {}{hash_padding}  {rel_path_str}{rel_path_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
-            } else if max_rel_path_width > 0 {
-                // Show relative path column when config is provided
-                let rel_path_str = d.rel_path.as_deref().unwrap_or("");
-                let rel_path_padding =
-                    " ".repeat(max_rel_path_width.saturating_sub(rel_path_str.len()));
+                format!("{marker} {colored_path}{path_padding}  {}{hash_padding}  {name_str}{name_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
+            } else if max_name_width > 0 {
+                let name_str = d.name.as_deref().unwrap_or("");
+                let name_padding =
+                    " ".repeat(max_name_width.saturating_sub(name_str.len()));
 
-                format!("{marker} {}{hash_padding}  {rel_path_str}{rel_path_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
+                format!("{marker} {}{hash_padding}  {name_str}{name_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
             } else {
-                // Original format without relative path
+                // Original format without the name column
                 format!("{marker} {}{hash_padding}  {colored_branch}{branch_padding}  {colored_timestamp}", d.hash)
             }
         })
@@ -410,10 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_worktree_table_with_relative_paths() {
-        // Test that relative paths are displayed when config is provided
-        use crate::config::{Config, Hooks, IntegrationsConfig, WorktreeConfig};
-
+    fn test_format_worktree_table_with_names() {
         let entries = vec![
             WorktreeEntry {
                 path: "/Users/test/repo-worktrees/main".to_string(),
@@ -436,43 +417,66 @@ mod tests {
         ];
         let commit_times = vec![None, None, None];
 
-        let config = Config {
-            worktree: WorktreeConfig {
-                dir: "../{repo}-worktrees/{branch}".to_string(),
-            },
-            hooks: Hooks::default(),
-            integrations: IntegrationsConfig::default(),
-        };
+        let names = ["@", "feature", "docs/tweak"].map(String::from);
 
         let result = format_worktree_table(
             &entries,
             &commit_times,
             false,
             crate::color::ColorMode::Never,
-            Some(&config),
+            Some(&names),
         );
 
         assert_eq!(result.len(), 3);
 
-        // Main worktree (index 0) should have blank relative path column
-        // Format: "  a1b2c3d4            [@]  unknown" (extra spaces where rel_path would be)
+        // Main worktree (index 0) should have blank name column
+        // Format: "  a1b2c3d4            [@]  unknown" (extra spaces where the name would be)
         let main_line = &result[0];
         assert!(main_line.contains("a1b2c3d4"));
         assert!(main_line.contains("[@]"));
 
-        // Feature worktree should show "feature" as relative path
+        // Feature worktree should show "feature" as name
         // Format: "  e5f6g7h8  feature  [feature]  unknown"
         let feature_line = &result[1];
         assert!(feature_line.contains("e5f6g7h8"));
         assert!(feature_line.contains("feature"));
         assert!(feature_line.contains("[feature]"));
 
-        // Nested worktree should show "docs/tweak" as relative path
+        // Nested worktree should show "docs/tweak" as name
         // Format: "* i9j0k1l2  docs/tweak  [docs/tweak]  unknown"
         let nested_line = &result[2];
         assert!(nested_line.contains("i9j0k1l2"));
         assert!(nested_line.contains("docs/tweak"));
         assert!(nested_line.contains("[docs/tweak]"));
         assert!(nested_line.starts_with("* ")); // Active marker
+    }
+
+    #[test]
+    fn test_format_worktree_table_main_only_has_no_name_column() {
+        let entries = vec![WorktreeEntry {
+            path: "/path/to/main".to_string(),
+            branch: Some("main".to_string()),
+            hash: Some("a1b2c3d4".to_string()),
+            is_active: false,
+        }];
+        let commit_times = vec![None];
+        let names = ["@".to_string()];
+
+        let with_names = format_worktree_table(
+            &entries,
+            &commit_times,
+            false,
+            crate::color::ColorMode::Never,
+            Some(&names),
+        );
+        let without_names = format_worktree_table(
+            &entries,
+            &commit_times,
+            false,
+            crate::color::ColorMode::Never,
+            None,
+        );
+
+        assert_eq!(with_names, without_names);
     }
 }

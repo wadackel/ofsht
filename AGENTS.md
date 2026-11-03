@@ -185,6 +185,14 @@ src/
 - Exit codes 130/1 (Esc/no selection) are treated as Ok(vec![]) rather than errors
 - Preview window shows `git log --oneline -n 10` for each worktree
 
+**Worktree Name Resolution** (`domain/worktree.rs`)
+- The root is derived from `worktree.dir` by `worktree_root_from_template()`: the complete path components before `{branch}`, or `None` when the template has no `{branch}`
+- `WorktreeList::resolve_short_name()`: branch name → path below the root → directory name of worktrees outside the root. Never matches the main worktree and never reads the current directory
+- `WorktreeList::resolve_name()`: adds absolute paths and paths relative to the current directory
+- Several outside worktrees sharing a directory name fail with `Ambiguous worktree name`
+- `WorktreeList::short_name()` returns a name only when typing it reaches that worktree; `display_names()` falls back to the path, so `ofsht ls`, fzf, and `ofsht open` agree with what `cd` and `rm` accept
+- `cd` also accepts the main worktree's branch name; `rm` refuses it with `Cannot remove main worktree`
+
 **Path Template Expansion** (`commands/add.rs`, `commands/create.rs`)
 - Template variables: `{repo}` and `{branch}`
 - Supports both absolute paths (`/tmp/worktrees/...`) and relative paths (`../{repo}-worktrees/...`)
@@ -209,7 +217,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 
 **Command Modules** (in `src/commands/`):
 - **add.rs** (`cmd_new`): GitHub integration (PR/issue detection) → worktree creation → hooks → zoxide → optional tmux window/pane
-- **cd.rs** (`cmd_goto`): Parse worktree list → find by branch name → optional fzf selection → print path for shell integration
+- **cd.rs** (`cmd_goto`): Parse worktree list → optional fzf selection → resolve name → print path for shell integration
 - **common.rs**: Shared utilities (`get_main_repo_root`, `parse_all_worktrees`, `resolve_worktree_target`, etc.)
 - **completion.rs** (`cmd_completion`): Print shell-specific completion setup instructions
 - **create.rs** (`cmd_create`): Simple worktree creation without GitHub/tmux (deprecated command)
@@ -222,7 +230,8 @@ All commands in `src/commands/` modules follow a consistent pattern:
 
 **Key Shared Functions** (in `commands/common.rs`):
 - `get_main_repo_root()`: Find main repo using `git rev-parse --git-common-dir`
-- `resolve_worktree_target()`: Resolve branch name, path, or `.` to canonical worktree path
+- `resolve_worktree_target()`: Resolve a removal target (`.`, branch name, worktree name, or path) to a canonical worktree path
+- `ambiguous_name_error()`: Error listing the worktrees that share a directory name
 - `parse_all_worktrees()`: Parse `git worktree list --porcelain` output
 - `find_worktree_by_branch()`: Locate worktree path by branch name
 

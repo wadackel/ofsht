@@ -150,6 +150,7 @@ pub fn cmd_rm_many(
 
     // Get worktree list once for all targets
     let list_stdout = ctx.worktree_list_stdout()?;
+    let root = ctx.worktree_root();
 
     // Resolve targets: CLI args > stdin (when piped) > fzf
     let targets: Vec<String> = if targets.is_empty() {
@@ -164,7 +165,7 @@ pub fn cmd_rm_many(
             }
 
             // Build items for fzf
-            let items = integrations::fzf::build_worktree_items(&list_stdout);
+            let items = integrations::fzf::build_worktree_items(&list_stdout, root.as_deref());
 
             if items.is_empty() {
                 anyhow::bail!("No worktrees found");
@@ -201,7 +202,7 @@ pub fn cmd_rm_many(
     let mut seen_paths = HashSet::new();
 
     for target in &targets {
-        match resolve_worktree_target(target, &list_stdout) {
+        match resolve_worktree_target(target, &list_stdout, root.as_deref()) {
             Ok((canonical_path, worktree_path, branch_name, is_current)) => {
                 // Special handling for current worktree (.)
                 if is_current {

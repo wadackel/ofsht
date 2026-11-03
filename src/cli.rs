@@ -2,7 +2,6 @@ use clap::{Parser, Subcommand};
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::path::PathBuf;
 
 use crate::integrations::git::{GitClient, RealGitClient};
 
@@ -219,7 +218,7 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
 
     let prefix = current.to_string_lossy();
 
-    // Use HashSet to deduplicate branch names and relative paths
+    // Use HashSet to deduplicate branch names and short names
     let mut candidates_set = HashSet::new();
 
     // Always include "@" if it matches the prefix
@@ -240,29 +239,16 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
         }
     }
 
-    // Try to add relative paths (new behavior)
+    // Add the short names; a worktree without one stays reachable by its branch name
     if let Ok(repo_root) = crate::commands::common::get_main_repo_root() {
-        if crate::config::Config::load_from_repo_root(&repo_root).is_ok() {
-            // Collect all non-main worktree paths
-            let worktree_paths: Vec<PathBuf> = list
-                .non_main()
-                .iter()
-                .map(|entry| PathBuf::from(&entry.path))
-                .collect();
-
-            // Calculate worktree root from all non-main worktrees
-            if let Some(worktree_root) =
-                crate::domain::worktree::calculate_worktree_root_from_paths(&worktree_paths)
-            {
-                // Add relative paths for all non-main worktrees
-                for entry in list.non_main() {
-                    let worktree_path = PathBuf::from(&entry.path);
-                    if let Some(rel_path) = crate::domain::worktree::calculate_relative_path(
-                        &worktree_path,
-                        &worktree_root,
-                    ) {
-                        candidates_set.insert(rel_path);
-                    }
+        if let Ok(config) = crate::config::Config::load_from_repo_root(&repo_root) {
+            let root = crate::domain::worktree::worktree_root_from_template(
+                &config.worktree.dir,
+                &repo_root,
+            );
+            for entry in list.non_main() {
+                if let Some(name) = list.short_name(entry, root.as_deref()) {
+                    candidates_set.insert(name);
                 }
             }
         }

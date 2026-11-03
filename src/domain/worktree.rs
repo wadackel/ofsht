@@ -2,7 +2,7 @@
 //!
 //! This module contains data structures and parsing logic for git worktrees.
 
-use crate::path_utils::canonicalize_allow_missing;
+use crate::path_utils::{canonicalize_allow_missing, display_path};
 
 /// Worktree entry for enhanced display
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,11 +26,19 @@ fn is_path_active(worktree_path: &str, canonical_active: Option<&std::path::Path
     false
 }
 
+/// Outcome of resolving a name against the non-main worktrees
+#[derive(Debug, PartialEq, Eq)]
+pub enum NameResolution<'a> {
+    Found(&'a WorktreeEntry),
+    /// Several worktrees outside the root share the directory name
+    Ambiguous(Vec<&'a WorktreeEntry>),
+    NotFound,
+}
+
 /// Unified worktree list parsed from `git worktree list --porcelain` output.
 ///
-/// Single parser + six query methods (`entries`, `main`, `non_main`,
-/// `find_by_branch`, `find_by_path`, `current`) replacing the previous family
-/// of standalone porcelain scanners scattered across `commands/*` and `cli.rs`.
+/// Single parser + query methods replacing the previous family of standalone
+/// porcelain scanners scattered across `commands/*` and `cli.rs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeList {
     entries: Vec<WorktreeEntry>,
@@ -150,6 +158,119 @@ impl WorktreeList {
     pub fn current(&self) -> Option<&WorktreeEntry> {
         self.entries.iter().find(|e| e.is_active)
     }
+
+    /// Resolve a name without consulting the current directory: branch name, then the path
+    /// below `root`, then the directory name of worktrees outside `root`.
+    /// The main worktree is never matched.
+    #[must_use]
+    pub fn resolve_short_name(
+        &self,
+        name: &str,
+        root: Option<&std::path::Path>,
+    ) -> NameResolution<'_> {
+        if let Some(entry) = self.find_by_branch(name) {
+            return NameResolution::Found(entry);
+        }
+        if let Some(entry) = root.and_then(|r| self.find_by_path(&r.join(name))) {
+            return NameResolution::Found(entry);
+        }
+
+        let mut matches: Vec<&WorktreeEntry> = self
+            .non_main()
+            .iter()
+            .filter(|e| directory_name(e) == Some(name) && name_below_root(e, root).is_none())
+            .collect();
+        match matches.len() {
+            0 => NameResolution::NotFound,
+            1 => NameResolution::Found(matches.remove(0)),
+            _ => NameResolution::Ambiguous(matches),
+        }
+    }
+
+    /// Resolve user input: `resolve_short_name`, then an absolute path or a path relative to
+    /// the current directory.
+    #[must_use]
+    pub fn resolve_name(&self, name: &str, root: Option<&std::path::Path>) -> NameResolution<'_> {
+        match self.resolve_short_name(name, root) {
+            NameResolution::NotFound => self
+                .find_by_path(std::path::Path::new(name))
+                .map_or(NameResolution::NotFound, NameResolution::Found),
+            resolution => resolution,
+        }
+    }
+
+    /// The short name of `entry`, or `None` when typing that name would reach something else.
+    #[must_use]
+    pub fn short_name(
+        &self,
+        entry: &WorktreeEntry,
+        root: Option<&std::path::Path>,
+    ) -> Option<String> {
+        let name =
+            name_below_root(entry, root).or_else(|| directory_name(entry).map(str::to_string))?;
+
+        // `resolve_short_name` skips the main worktree, but `cd` takes `@` and the main branch
+        // to it before any name is resolved
+        let main_branch = self.main().and_then(|m| m.branch.as_deref());
+        if name == "@" || main_branch == Some(name.as_str()) {
+            return None;
+        }
+
+        match self.resolve_short_name(&name, root) {
+            NameResolution::Found(found) if found.path == entry.path => Some(name),
+            _ => None,
+        }
+    }
+
+    /// Names to show for `entries()`, in the same order: `@` for the main worktree, the short
+    /// name where one exists, and the home-relative path otherwise.
+    #[must_use]
+    pub fn display_names(&self, root: Option<&std::path::Path>) -> Vec<String> {
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                if index == 0 {
+                    "@".to_string()
+                } else {
+                    self.short_name(entry, root)
+                        .unwrap_or_else(|| display_path(std::path::Path::new(&entry.path)))
+                }
+            })
+            .collect()
+    }
+}
+
+/// The path of `entry` below `root`, or `None` when it is outside `root` or is `root` itself
+fn name_below_root(entry: &WorktreeEntry, root: Option<&std::path::Path>) -> Option<String> {
+    let root = root?;
+    let path = canonicalize_allow_missing(std::path::Path::new(&entry.path));
+    calculate_relative_path(&path, root).filter(|name| !name.is_empty())
+}
+
+fn directory_name(entry: &WorktreeEntry) -> Option<&str> {
+    std::path::Path::new(&entry.path)
+        .file_name()
+        .and_then(|name| name.to_str())
+}
+
+/// The directory that `worktree.dir` places worktrees under
+///
+/// Follows the expansion in `WorktreeService`. Only complete path components count, so
+/// `../{repo}-{branch}` gives the parent of the repository. Returns `None` when the template
+/// has no `{branch}` or the repository root has no usable name.
+#[must_use]
+pub fn worktree_root_from_template(
+    template: &str,
+    repo_root: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let repo_name = repo_root.file_name()?.to_str()?;
+    let (before_branch, _) = template.split_once("{branch}")?;
+    let expanded = before_branch.replace("{repo}", repo_name);
+    let directory = expanded
+        .rfind(std::path::is_separator)
+        .map_or("", |index| &expanded[..=index]);
+    Some(canonicalize_allow_missing(&repo_root.join(directory)))
 }
 
 /// Calculate the depth from {branch} placeholder to the worktree root
@@ -190,7 +311,7 @@ pub fn calculate_branch_depth(template: &str) -> usize {
 /// Returns None if the path doesn't have enough parent directories.
 ///
 /// **Note**: This function assumes the branch name is a single directory component.
-/// For nested branch names (e.g., `docs/tweak`), use `calculate_worktree_root_from_paths` instead.
+/// For nested branch names (e.g., `docs/tweak`), use `worktree_root_from_template` instead.
 ///
 /// # Examples
 ///
@@ -213,75 +334,6 @@ pub fn calculate_worktree_root(
         root = root.parent()?;
     }
     Some(root.to_path_buf())
-}
-
-/// Calculate the worktree root directory from all non-main worktree paths
-///
-/// Finds the common parent directory that contains all worktrees.
-/// This method correctly handles nested branch names (e.g., `docs/tweak`, `team/alice/fix`).
-///
-/// Returns None if:
-/// - No worktree paths are provided
-/// - Paths have no common parent
-///
-/// # Examples
-///
-/// ```
-/// # use std::path::PathBuf;
-/// # use ofsht::domain::worktree::calculate_worktree_root_from_paths;
-/// let paths = vec![
-///     PathBuf::from("/Users/test/repo-worktrees/feature"),
-///     PathBuf::from("/Users/test/repo-worktrees/docs/tweak"),
-/// ];
-/// let root = calculate_worktree_root_from_paths(&paths);
-/// assert_eq!(root, Some(PathBuf::from("/Users/test/repo-worktrees")));
-/// ```
-#[must_use]
-pub fn calculate_worktree_root_from_paths(
-    worktree_paths: &[std::path::PathBuf],
-) -> Option<std::path::PathBuf> {
-    use std::path::{Component, PathBuf};
-
-    if worktree_paths.is_empty() {
-        return None;
-    }
-
-    if worktree_paths.len() == 1 {
-        // Only one worktree - return its parent as the root
-        return worktree_paths[0].parent().map(std::path::Path::to_path_buf);
-    }
-
-    // Find common prefix by comparing path components
-    let first_components: Vec<Component> = worktree_paths[0].components().collect();
-    let mut common_depth = first_components.len();
-
-    // Compare with all other paths to find the shortest common prefix
-    for path in &worktree_paths[1..] {
-        let components: Vec<Component> = path.components().collect();
-        let mut current_depth = 0;
-
-        for (comp_first, comp_other) in first_components.iter().zip(components.iter()) {
-            if comp_first == comp_other {
-                current_depth += 1;
-            } else {
-                break;
-            }
-        }
-
-        common_depth = common_depth.min(current_depth);
-    }
-
-    if common_depth == 0 {
-        return None;
-    }
-
-    // Build the common prefix path
-    let mut result = PathBuf::new();
-    for component in first_components.iter().take(common_depth) {
-        result.push(component);
-    }
-
-    Some(result)
 }
 
 /// Calculate the relative path from worktree root to the worktree
@@ -645,5 +697,293 @@ mod tests {
         let output = "worktree /repo\nbranch refs/heads/main\n\n";
         let list = WorktreeList::parse(output, None);
         assert_eq!(list.entries()[0].hash, None);
+    }
+
+    const ROOT: &str = "/work/myapp-worktrees";
+
+    /// Build a list from `(path, branch)` pairs; the first pair is the main worktree.
+    fn list_of(worktrees: &[(&str, Option<&str>)]) -> WorktreeList {
+        let blocks: Vec<String> = worktrees
+            .iter()
+            .map(|(path, branch)| {
+                let head = branch.map_or_else(
+                    || "detached".to_string(),
+                    |b| format!("branch refs/heads/{b}"),
+                );
+                format!("worktree {path}\nHEAD abc12345xxxxxx\n{head}\n\n")
+            })
+            .collect();
+        WorktreeList::parse(&blocks.concat(), None)
+    }
+
+    fn root() -> &'static std::path::Path {
+        std::path::Path::new(ROOT)
+    }
+
+    fn found_path(resolution: &NameResolution<'_>) -> Option<String> {
+        match resolution {
+            NameResolution::Found(entry) => Some(entry.path.clone()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_worktree_root_from_template_default() {
+        let root = worktree_root_from_template(
+            "../{repo}-worktrees/{branch}",
+            std::path::Path::new("/work/myapp"),
+        );
+        assert_eq!(root, Some(PathBuf::from(ROOT)));
+    }
+
+    #[test]
+    fn test_worktree_root_from_template_absolute() {
+        let root = worktree_root_from_template(
+            "/srv/worktrees/{repo}/{branch}",
+            std::path::Path::new("/work/myapp"),
+        );
+        assert_eq!(root, Some(PathBuf::from("/srv/worktrees/myapp")));
+    }
+
+    #[test]
+    fn test_worktree_root_from_template_branch_inside_path_component() {
+        let root =
+            worktree_root_from_template("../{repo}-{branch}", std::path::Path::new("/work/myapp"));
+        assert_eq!(root, Some(PathBuf::from("/work")));
+    }
+
+    #[test]
+    fn test_worktree_root_from_template_without_separator_is_repo_root() {
+        let repo_root = std::path::Path::new("/work/myapp");
+        assert_eq!(
+            worktree_root_from_template("{branch}", repo_root),
+            Some(PathBuf::from("/work/myapp"))
+        );
+        assert_eq!(
+            worktree_root_from_template("{repo}-{branch}", repo_root),
+            Some(PathBuf::from("/work/myapp"))
+        );
+    }
+
+    #[test]
+    fn test_worktree_root_from_template_without_branch_is_none() {
+        let root = worktree_root_from_template("../fixed", std::path::Path::new("/work/myapp"));
+        assert_eq!(root, None);
+    }
+
+    #[test]
+    fn test_resolve_short_name_prefers_branch_over_root_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/review", Some("feature/review")),
+            ("/elsewhere/other", Some("review")),
+        ]);
+        assert_eq!(
+            found_path(&list.resolve_short_name("review", Some(root()))).as_deref(),
+            Some("/elsewhere/other")
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_prefers_root_name_over_outside_directory_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/review", Some("feature/review")),
+            ("/elsewhere/review", Some("fix/typo")),
+        ]);
+        assert_eq!(
+            found_path(&list.resolve_short_name("review", Some(root()))).as_deref(),
+            Some("/work/myapp-worktrees/review")
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_finds_outside_worktree_by_directory_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/wt1", Some("feature/login")),
+            ("/elsewhere/check", None),
+        ]);
+        assert_eq!(
+            found_path(&list.resolve_short_name("check", Some(root()))).as_deref(),
+            Some("/elsewhere/check")
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_reports_outside_duplicates_as_ambiguous() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/a/review", Some("fix/a")),
+            ("/elsewhere/b/review", Some("fix/b")),
+        ]);
+        let NameResolution::Ambiguous(entries) = list.resolve_short_name("review", Some(root()))
+        else {
+            panic!("expected Ambiguous");
+        };
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["/elsewhere/a/review", "/elsewhere/b/review"]);
+    }
+
+    #[test]
+    fn test_resolve_short_name_skips_tail_of_nested_root_worktree() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/feature/a", Some("x1")),
+        ]);
+        assert_eq!(
+            list.resolve_short_name("a", Some(root())),
+            NameResolution::NotFound
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_never_matches_main_directory() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/other", Some("fix/other")),
+        ]);
+        assert_eq!(
+            list.resolve_short_name("myapp", Some(root())),
+            NameResolution::NotFound
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_without_root_treats_all_as_outside() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/wt1", Some("feature/login")),
+        ]);
+        assert_eq!(
+            found_path(&list.resolve_short_name("wt1", None)).as_deref(),
+            Some("/work/myapp-worktrees/wt1")
+        );
+    }
+
+    #[test]
+    fn test_resolve_name_falls_back_to_path() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/review", Some("fix/typo")),
+        ]);
+        assert_eq!(
+            found_path(&list.resolve_name("/elsewhere/review", None)).as_deref(),
+            Some("/elsewhere/review")
+        );
+    }
+
+    #[test]
+    fn test_short_name_inside_root_is_relative_path() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/feature/a", Some("x1")),
+        ]);
+        let entry = &list.non_main()[0];
+        assert_eq!(
+            list.short_name(entry, Some(root())).as_deref(),
+            Some("feature/a")
+        );
+    }
+
+    #[test]
+    fn test_short_name_outside_root_is_directory_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/review", Some("fix/typo")),
+        ]);
+        let entry = &list.non_main()[0];
+        assert_eq!(
+            list.short_name(entry, Some(root())).as_deref(),
+            Some("review")
+        );
+    }
+
+    #[test]
+    fn test_short_name_is_none_when_root_worktree_shares_directory_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/review", Some("feature/review")),
+            ("/elsewhere/review", Some("fix/typo")),
+        ]);
+        let inside = &list.non_main()[0];
+        let outside = &list.non_main()[1];
+        assert_eq!(
+            list.short_name(inside, Some(root())).as_deref(),
+            Some("review")
+        );
+        assert_eq!(list.short_name(outside, Some(root())), None);
+    }
+
+    #[test]
+    fn test_short_name_is_none_when_outside_worktrees_share_directory_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/a/review", Some("fix/a")),
+            ("/elsewhere/b/review", Some("fix/b")),
+        ]);
+        assert_eq!(list.short_name(&list.non_main()[0], Some(root())), None);
+        assert_eq!(list.short_name(&list.non_main()[1], Some(root())), None);
+    }
+
+    #[test]
+    fn test_short_name_is_none_when_another_branch_takes_the_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/review", Some("feature/review")),
+            ("/elsewhere/other", Some("review")),
+        ]);
+        assert_eq!(list.short_name(&list.non_main()[0], Some(root())), None);
+    }
+
+    #[test]
+    fn test_short_name_is_none_when_main_branch_takes_the_name() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/main", Some("feature/other")),
+        ]);
+        assert_eq!(list.short_name(&list.non_main()[0], Some(root())), None);
+    }
+
+    #[test]
+    fn test_short_name_is_none_for_directory_named_at_sign() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/@", Some("fix/typo")),
+        ]);
+        assert_eq!(list.short_name(&list.non_main()[0], Some(root())), None);
+    }
+
+    #[test]
+    fn test_short_name_of_worktree_at_root_is_directory_name() {
+        let list = list_of(&[("/work/myapp", Some("main")), (ROOT, Some("feature/root"))]);
+        assert_eq!(
+            list.short_name(&list.non_main()[0], Some(root()))
+                .as_deref(),
+            Some("myapp-worktrees")
+        );
+    }
+
+    #[test]
+    fn test_display_names_follow_entry_order() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/wt1", Some("feature/login")),
+            ("/elsewhere/check", None),
+        ]);
+        assert_eq!(list.display_names(Some(root())), ["@", "wt1", "check"]);
+    }
+
+    #[test]
+    fn test_display_names_fall_back_to_path_for_duplicates() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/a/review", Some("fix/a")),
+            ("/elsewhere/b/review", Some("fix/b")),
+        ]);
+        assert_eq!(
+            list.display_names(Some(root())),
+            ["@", "/elsewhere/a/review", "/elsewhere/b/review"]
+        );
     }
 }

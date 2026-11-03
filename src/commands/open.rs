@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::color;
 use crate::commands::context::CommandContext;
 use crate::config::OpenMode;
-use crate::domain::worktree::{
-    calculate_relative_path, calculate_worktree_root_from_paths, WorktreeList,
-};
+use crate::domain::worktree::WorktreeList;
 use crate::integrations::git::{GitClient, RealGitClient};
 use crate::integrations::tmux::{RealTmuxLauncher, TmuxLauncher};
 use crate::path_utils::canonicalize_allow_missing;
@@ -40,40 +38,16 @@ fn get_current_worktree_path(git: &RealGitClient) -> Result<PathBuf> {
 
 /// Build worktree list with names, skipping the current worktree
 fn build_worktree_list(
-    main_path: &str,
-    main_branch: Option<&str>,
-    worktrees: &[(String, Option<String>)],
+    list: &WorktreeList,
+    root: Option<&Path>,
     current_path: &Path,
 ) -> (Vec<OpenWorktree>, Option<String>) {
-    // Build full list: main first, then non-main worktrees
-    let mut all_entries: Vec<(String, Option<String>)> = Vec::with_capacity(worktrees.len() + 1);
-    all_entries.push((main_path.to_string(), main_branch.map(String::from)));
-    all_entries.extend(worktrees.iter().cloned());
-
-    // Calculate worktree root from non-main paths for name calculation
-    let non_main_paths: Vec<PathBuf> = worktrees.iter().map(|(p, _)| PathBuf::from(p)).collect();
-    let worktree_root = calculate_worktree_root_from_paths(&non_main_paths);
-
     let canonical_current = canonicalize_allow_missing(current_path);
     let mut skipped_name: Option<String> = None;
     let mut result = Vec::new();
 
-    for (index, (path, _branch)) in all_entries.iter().enumerate() {
-        let canonical_path = canonicalize_allow_missing(&PathBuf::from(path));
-
-        // Calculate name
-        let name = if index == 0 {
-            "@".to_string()
-        } else {
-            worktree_root
-                .as_ref()
-                .and_then(|root| calculate_relative_path(&PathBuf::from(path), root))
-                .unwrap_or_else(|| {
-                    PathBuf::from(path)
-                        .file_name()
-                        .map_or_else(|| path.clone(), |n| n.to_string_lossy().to_string())
-                })
-        };
+    for (entry, name) in list.entries().iter().zip(list.display_names(root)) {
+        let canonical_path = canonicalize_allow_missing(&PathBuf::from(&entry.path));
 
         // Skip current worktree
         if canonical_path == canonical_current {
@@ -82,7 +56,7 @@ fn build_worktree_list(
         }
 
         result.push(OpenWorktree {
-            path: path.clone(),
+            path: entry.path.clone(),
             name,
         });
     }
@@ -105,23 +79,15 @@ pub fn cmd_open(pane: bool, window: bool, color_mode: color::ColorMode) -> Resul
     // Get worktree list
     let list_stdout = ctx.worktree_list_stdout()?;
     let list = WorktreeList::parse(&list_stdout, None);
-    let main_entry = list
-        .main()
+    list.main()
         .context("git worktree list returned no entries")?;
-    let main_path = main_entry.path.clone();
-    let main_branch = main_entry.branch.as_deref();
-    let worktrees: Vec<(String, Option<String>)> = list
-        .non_main()
-        .iter()
-        .map(|e| (e.path.clone(), e.branch.clone()))
-        .collect();
 
     // Detect current worktree
     let current_path = get_current_worktree_path(&ctx.git)?;
 
     // Build list, skipping current worktree
-    let (open_list, skipped_name) =
-        build_worktree_list(&main_path, main_branch, &worktrees, &current_path);
+    let root = ctx.worktree_root();
+    let (open_list, skipped_name) = build_worktree_list(&list, root.as_deref(), &current_path);
 
     if open_list.is_empty() {
         eprintln!("No worktrees to open (all worktrees are already in the current session).");
@@ -339,19 +305,28 @@ mod tests {
         assert!(list.main().is_none());
     }
 
+    /// Parse `(path, branch)` pairs; the first pair is the main worktree.
+    fn list_of(worktrees: &[(&str, &str)]) -> WorktreeList {
+        let blocks: Vec<String> = worktrees
+            .iter()
+            .map(|(path, branch)| {
+                format!("worktree {path}\nHEAD abc123\nbranch refs/heads/{branch}\n\n")
+            })
+            .collect();
+        WorktreeList::parse(&blocks.concat(), None)
+    }
+
     #[test]
     fn test_build_worktree_list_skips_current() {
-        let main_path = "/path/to/main";
-        let worktrees = vec![
-            (
-                "/worktrees/feature".to_string(),
-                Some("feature".to_string()),
-            ),
-            ("/worktrees/fix".to_string(), Some("fix".to_string())),
-        ];
+        let worktrees = list_of(&[
+            ("/path/to/main", "main"),
+            ("/worktrees/feature", "feature"),
+            ("/worktrees/fix", "fix"),
+        ]);
         let current = PathBuf::from("/path/to/main");
 
-        let (list, skipped) = build_worktree_list(main_path, Some("main"), &worktrees, &current);
+        let (list, skipped) =
+            build_worktree_list(&worktrees, Some(Path::new("/worktrees")), &current);
 
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "feature");
@@ -361,17 +336,15 @@ mod tests {
 
     #[test]
     fn test_build_worktree_list_skips_non_main_current() {
-        let main_path = "/path/to/main";
-        let worktrees = vec![
-            (
-                "/worktrees/feature".to_string(),
-                Some("feature".to_string()),
-            ),
-            ("/worktrees/fix".to_string(), Some("fix".to_string())),
-        ];
+        let worktrees = list_of(&[
+            ("/path/to/main", "main"),
+            ("/worktrees/feature", "feature"),
+            ("/worktrees/fix", "fix"),
+        ]);
         let current = PathBuf::from("/worktrees/feature");
 
-        let (list, skipped) = build_worktree_list(main_path, Some("main"), &worktrees, &current);
+        let (list, skipped) =
+            build_worktree_list(&worktrees, Some(Path::new("/worktrees")), &current);
 
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "@");
@@ -382,35 +355,44 @@ mod tests {
 
     #[test]
     fn test_build_worktree_list_all_empty_after_skip() {
-        let main_path = "/path/to/main";
-        let worktrees: Vec<(String, Option<String>)> = vec![];
+        let worktrees = list_of(&[("/path/to/main", "main")]);
         let current = PathBuf::from("/path/to/main");
 
-        let (list, skipped) = build_worktree_list(main_path, Some("main"), &worktrees, &current);
+        let (list, skipped) =
+            build_worktree_list(&worktrees, Some(Path::new("/worktrees")), &current);
 
         assert!(list.is_empty());
         assert_eq!(skipped, Some("@".to_string()));
     }
 
     #[test]
-    fn test_build_worktree_list_worktree_names_use_relative_paths() {
-        let main_path = "/path/to/main";
-        let worktrees = vec![
-            (
-                "/worktrees/feat/foo".to_string(),
-                Some("feat/foo".to_string()),
-            ),
-            (
-                "/worktrees/fix/bar".to_string(),
-                Some("fix/bar".to_string()),
-            ),
-        ];
+    fn test_build_worktree_list_worktree_names_use_paths_below_root() {
+        let worktrees = list_of(&[
+            ("/path/to/main", "main"),
+            ("/worktrees/feat/foo", "feat/foo"),
+            ("/worktrees/fix/bar", "fix/bar"),
+        ]);
         let current = PathBuf::from("/path/to/main");
 
-        let (list, _) = build_worktree_list(main_path, Some("main"), &worktrees, &current);
+        let (list, _) = build_worktree_list(&worktrees, Some(Path::new("/worktrees")), &current);
 
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "feat/foo");
         assert_eq!(list[1].name, "fix/bar");
+    }
+
+    #[test]
+    fn test_build_worktree_list_keeps_outside_worktree_short() {
+        let worktrees = list_of(&[
+            ("/path/to/main", "main"),
+            ("/worktrees/feature", "feature"),
+            ("/elsewhere/deep/review", "fix/typo"),
+        ]);
+        let current = PathBuf::from("/path/to/main");
+
+        let (list, _) = build_worktree_list(&worktrees, Some(Path::new("/worktrees")), &current);
+
+        assert_eq!(list[0].name, "feature");
+        assert_eq!(list[1].name, "review");
     }
 }

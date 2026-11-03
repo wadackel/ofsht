@@ -3,11 +3,11 @@
 //! This module contains shared helper functions used across multiple commands.
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::domain::worktree::WorktreeList;
+use crate::domain::worktree::{NameResolution, WorktreeEntry, WorktreeList};
 use crate::integrations::git::{GitClient, RealGitClient};
-use crate::path_utils::canonicalize_allow_missing;
+use crate::path_utils::{canonicalize_allow_missing, display_path};
 
 /// Get the main repository root path
 ///
@@ -46,16 +46,32 @@ pub fn get_main_repo_root() -> Result<PathBuf> {
     Ok(repo_root)
 }
 
+/// Error for a directory name shared by several worktrees outside the root
+#[must_use]
+pub fn ambiguous_name_error(name: &str, entries: &[&WorktreeEntry]) -> anyhow::Error {
+    let paths: Vec<String> = entries
+        .iter()
+        .map(|entry| format!("  {}", display_path(Path::new(&entry.path))))
+        .collect();
+    anyhow::anyhow!(
+        "Ambiguous worktree name: {name}\n{}\nSpecify a branch name or a path",
+        paths.join("\n")
+    )
+}
+
 /// Resolve a worktree target to its canonical path and metadata
+///
+/// `root` is the directory that `worktree.dir` places worktrees under.
 ///
 /// Returns: (`canonical_path`, `worktree_path`, `branch_name`, `is_current_worktree`)
 ///
 /// # Errors
-/// Returns an error if the worktree target cannot be found or refers to the main worktree
-#[allow(clippy::too_many_lines)]
+/// Returns an error if the worktree target cannot be found, is ambiguous, or refers to the
+/// main worktree
 pub fn resolve_worktree_target(
     name: &str,
     list_stdout: &str,
+    root: Option<&Path>,
 ) -> Result<(PathBuf, PathBuf, Option<String>, bool)> {
     let is_current_worktree_removal = name == ".";
 
@@ -78,8 +94,9 @@ pub fn resolve_worktree_target(
         .context("git worktree list returned no entries")?;
     let main_path = main_entry.path.clone();
 
-    // Check for main worktree
-    if name == "@" {
+    // Refuse the main branch name even when another worktree's directory shares it, because
+    // `cd <name>` goes to the main worktree and both commands must mean the same target.
+    if name == "@" || main_entry.branch.as_deref() == Some(name) {
         anyhow::bail!("Cannot remove main worktree");
     }
 
@@ -103,48 +120,19 @@ pub fn resolve_worktree_target(
         worktree_path = current_path;
         branch_name = active.branch.clone();
         canonical_path = canonicalize_allow_missing(&worktree_path);
-    } else if let Some(entry) = list.find_by_branch(name) {
-        // Found by branch name (excludes main automatically)
-        worktree_path = PathBuf::from(&entry.path);
-        branch_name = Some(name.to_string());
-        canonical_path = canonicalize_allow_missing(&worktree_path);
     } else {
-        // Try to resolve as relative path from worktree root
-        let worktree_paths: Vec<PathBuf> = list
-            .non_main()
-            .iter()
-            .map(|e| PathBuf::from(&e.path))
-            .collect();
-
-        let relative_match = crate::domain::worktree::calculate_worktree_root_from_paths(
-            &worktree_paths,
-        )
-        .and_then(|root| {
-            let abs_path = root.join(name);
-            list.find_by_path(&abs_path).cloned()
-        });
-
-        if let Some(matched) = relative_match {
-            worktree_path = PathBuf::from(&matched.path);
-            branch_name = matched.branch;
-            canonical_path = canonicalize_allow_missing(&worktree_path);
-        } else {
-            // Fallback: try to resolve as an absolute path
-            let input_path_buf = PathBuf::from(name);
-            let canonical_input = canonicalize_allow_missing(&input_path_buf);
-
-            // Check if it's the main worktree
-            let main_path_buf = PathBuf::from(&main_path);
-            let canonical_main = canonicalize_allow_missing(&main_path_buf);
-            if canonical_input == canonical_main {
-                anyhow::bail!("Cannot remove main worktree");
-            }
-
-            if let Some(entry) = list.find_by_path(&input_path_buf) {
+        match list.resolve_name(name, root) {
+            NameResolution::Found(entry) => {
                 worktree_path = PathBuf::from(&entry.path);
                 branch_name = entry.branch.clone();
-                canonical_path = canonical_input;
-            } else {
+                canonical_path = canonicalize_allow_missing(&worktree_path);
+            }
+            NameResolution::Ambiguous(entries) => return Err(ambiguous_name_error(name, &entries)),
+            NameResolution::NotFound => {
+                let canonical_input = canonicalize_allow_missing(Path::new(name));
+                if canonical_input == canonicalize_allow_missing(Path::new(&main_path)) {
+                    anyhow::bail!("Cannot remove main worktree");
+                }
                 anyhow::bail!("Worktree not found: {name}");
             }
         }
