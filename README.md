@@ -528,7 +528,19 @@ ofsht sync --copy
 
 # Combine flags
 ofsht sync --run --copy
+
+# Refresh only selected worktrees
+ofsht sync feature-a feature-b --run
+
+# Refresh the current linked worktree
+ofsht sync . --link
 ```
+
+Targets accept branch names, worktree names, paths, and `.`. With no targets, sync
+still covers every non-main worktree. Main-worktree targets are refused. All
+targets are resolved before any hooks run, and aliases of the same worktree run
+only once. Each worktree reports `Synced`, `Failed`, or `Skipped` after its result
+is known; any failure makes the command exit nonzero after the remaining targets.
 
 > [!TIP]
 > `ofsht sync` is idempotent. Existing symlinks pointing to the correct target are left unchanged, and files are overwritten safely. You can run it repeatedly without side effects.

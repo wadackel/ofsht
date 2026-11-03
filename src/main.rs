@@ -92,7 +92,13 @@ fn main() -> Result<()> {
         Commands::Completion { shell } => commands::completion::cmd_completion(&shell),
         Commands::ShellInit { shell } => commands::shell_init::cmd_shell_init(&shell),
         Commands::Open { pane, window } => commands::open::cmd_open(pane, window, color_mode),
-        Commands::Sync { run, copy, link } => commands::sync::cmd_sync(
+        Commands::Sync {
+            targets,
+            run,
+            copy,
+            link,
+        } => commands::sync::cmd_sync(
+            &targets,
             &commands::sync::SyncOptions { run, copy, link },
             cli.verbose,
             color_mode,

@@ -126,9 +126,12 @@ pub enum Commands {
     },
     /// Sync hook file operations to existing worktrees
     ///
-    /// Re-applies hooks.create (run/copy/link) to all existing non-main worktrees.
+    /// Re-applies hooks.create (run/copy/link) to selected non-main worktrees, or all by default.
     /// When no flags are specified, all actions are executed.
     Sync {
+        /// Worktree targets: branch, name, path, or . for the current worktree
+        #[arg(num_args = 0.., value_name = "TARGET", add = ArgValueCompleter::new(list_git_worktrees))]
+        targets: Vec<String>,
         /// Only execute run commands
         #[arg(long)]
         run: bool,
