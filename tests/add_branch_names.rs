@@ -596,9 +596,12 @@ fn add_detach_rejects_github_reference() {
 #[test]
 fn create_detach_rejects_invalid_name() {
     let fixture = Fixture::new();
+    // A previous checkout, so that `@{-1}` names a branch
+    git(&fixture.repo, &["switch", "-q", "-c", "previous"]);
+    git(&fixture.repo, &["switch", "-q", "main"]);
 
-    for name in ["", "../x"] {
-        let output = fixture.ofsht(&["create", "--detach", name]);
+    for name in ["", "../x", "/abs", "-x", "@{-1}"] {
+        let output = fixture.ofsht(&["create", "--detach", "--", name]);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success(), "{name:?}: {stderr}");
         assert!(

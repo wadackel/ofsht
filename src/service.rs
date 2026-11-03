@@ -68,10 +68,16 @@ where
 
         let dir = req.current_worktree.unwrap_or(req.repo_root);
         if req.detach {
-            // Without a branch, git no longer checks the name, and it becomes a path as given
-            self.git_client
+            // Without a branch, git no longer checks the name, and it becomes a path as given.
+            // `--branch` expands `@{-N}` before checking, so the name must come back unchanged
+            let invalid = || format!("Invalid worktree name: {:?}", req.branch);
+            let checked = self
+                .git_client
                 .run(&["check-ref-format", "--branch", req.branch], Some(dir))
-                .map_err(|_| anyhow::anyhow!("Invalid worktree name: {:?}", req.branch))?;
+                .with_context(invalid)?;
+            if checked.trim_end_matches('\n') != req.branch {
+                anyhow::bail!(invalid());
+            }
         }
         let porcelain = self.git_client.list_worktrees(Some(req.repo_root))?;
         let list = WorktreeList::parse(&porcelain, None);
