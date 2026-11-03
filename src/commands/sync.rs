@@ -30,6 +30,7 @@ pub fn cmd_sync(
     targets: &[String],
     options: &SyncOptions,
     verbose: bool,
+    overwrite: bool,
     color_mode: color::ColorMode,
 ) -> Result<()> {
     let &SyncOptions { run, copy, link } = options;
@@ -95,7 +96,8 @@ pub fn cmd_sync(
             None
         };
         let result = hooks::HookContext::new(path, &ctx.repo_root, root.as_deref(), verbose)
-            .and_then(|context| {
+            .and_then(|mut context| {
+                context.file_policy = hooks::FilePolicy::Sync { overwrite };
                 hooks::execute_hooks_with_mp(&actions, &context, color_mode, "  ", &mp)
             });
         if let Some(pb) = header_pb {

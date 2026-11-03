@@ -95,6 +95,38 @@ pub trait GitClient {
 pub struct RealGitClient;
 
 impl RealGitClient {
+    /// Whether a literal path is tracked, including staged deletions from HEAD.
+    pub fn path_is_tracked(dir: &Path, path: &Path) -> Result<bool> {
+        let mut cmd = build_command(Some(dir));
+        let output = cmd
+            .args(["--literal-pathspecs", "ls-files", "--error-unmatch", "--"])
+            .arg(path)
+            .output()
+            .context("Failed to query tracked paths")?;
+        match output.status.code() {
+            Some(0) => return Ok(true),
+            Some(1) => {}
+            _ => anyhow::bail!(
+                "git ls-files failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        }
+        // Index-only queries miss staged deletions; cached diff also works with an unborn HEAD.
+        let mut cmd = build_command(Some(dir));
+        cmd.args([
+            "--literal-pathspecs",
+            "diff",
+            "--cached",
+            "--no-renames",
+            "--diff-filter=D",
+            "--name-only",
+            "-z",
+            "--",
+        ])
+        .arg(path);
+        Ok(!run_capturing_bytes(cmd, "diff --cached")?.is_empty())
+    }
+
     /// Registered worktree paths without text decoding or porcelain quoting.
     pub fn worktree_paths(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut cmd = build_command(Some(dir));

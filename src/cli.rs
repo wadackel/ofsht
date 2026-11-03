@@ -132,6 +132,9 @@ pub enum Commands {
         /// Worktree targets: branch, name, path, or . for the current worktree
         #[arg(num_args = 0.., value_name = "TARGET", add = ArgValueCompleter::new(list_git_worktrees))]
         targets: Vec<String>,
+        /// Replace differing copied files, discarding their local changes
+        #[arg(long)]
+        overwrite: bool,
         /// Only execute run commands
         #[arg(long)]
         run: bool,

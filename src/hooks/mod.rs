@@ -6,6 +6,6 @@ mod output;
 mod runner;
 mod symlink;
 
-pub use context::HookContext;
+pub use context::{FilePolicy, HookContext};
 pub use executor::{execute_hooks_lenient_with_mp, execute_hooks_with_mp};
 pub use output::emit_line;

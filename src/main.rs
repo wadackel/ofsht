@@ -94,6 +94,7 @@ fn main() -> Result<()> {
         Commands::Open { pane, window } => commands::open::cmd_open(pane, window, color_mode),
         Commands::Sync {
             targets,
+            overwrite,
             run,
             copy,
             link,
@@ -101,6 +102,7 @@ fn main() -> Result<()> {
             &targets,
             &commands::sync::SyncOptions { run, copy, link },
             cli.verbose,
+            overwrite,
             color_mode,
         ),
     }
