@@ -73,7 +73,7 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
             let lines =
                 format_worktree_table(entries, &commit_times, show_path, color_mode, Some(&names));
             for line in lines {
-                println!("{line}");
+                crate::output::write_stdout(format_args!("{line}\n"))?;
             }
         } else {
             // Simple mode: branch names only — pipe-mode parse without active_path
@@ -82,13 +82,16 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
             for (index, entry) in list.entries().iter().enumerate() {
                 if index == 0 {
                     // Main worktree
-                    println!("@");
+                    crate::output::write_stdout(format_args!("@\n"))?;
                 } else if let Some(branch) = &entry.branch {
                     // Output branch name (actionable by cd and rm)
-                    println!("{branch}");
+                    crate::output::write_stdout(format_args!("{branch}\n"))?;
                 } else {
                     // Detached HEAD: output normalized absolute path to make it actionable by cd and rm
-                    println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
+                    crate::output::write_stdout(format_args!(
+                        "{}\n",
+                        normalize_absolute_path(&PathBuf::from(&entry.path))
+                    ))?;
                 }
             }
         }

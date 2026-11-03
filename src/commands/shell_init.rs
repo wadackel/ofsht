@@ -17,7 +17,7 @@ pub fn cmd_shell_init(shell: &str) -> Result<()> {
         }
     };
 
-    print!("{script}");
+    crate::output::write_stdout(format_args!("{script}"))?;
 
     Ok(())
 }

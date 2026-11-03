@@ -270,7 +270,10 @@ pub fn cmd_new(
         // (prevents shell integration from cd'ing in the calling shell)
     } else {
         // Print normalized absolute path to STDOUT for shell wrapper integration
-        println!("{}", normalize_absolute_path(&worktree_path));
+        crate::output::write_stdout(format_args!(
+            "{}\n",
+            normalize_absolute_path(&worktree_path)
+        ))?;
     }
 
     Ok(())

@@ -106,6 +106,53 @@ pub fn ambiguous_name_error(name: &str, entries: &[&WorktreeEntry]) -> anyhow::E
     )
 }
 
+/// Explain a failed lookup and suggest a branch checkout or existing worktree names.
+#[must_use]
+pub fn worktree_not_found_error(
+    name: &str,
+    list: &WorktreeList,
+    root: Option<&Path>,
+    include_main: bool,
+) -> anyhow::Error {
+    let message = format!("Worktree not found: {name}");
+    if let Some(main) = list.main() {
+        match RealGitClient.branch_exists(name, Some(Path::new(&main.path))) {
+            Ok(true) => {
+                let argument = if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "/_.-".contains(c))
+                {
+                    name.to_string()
+                } else {
+                    format!("'{}'", name.replace('\'', "'\\''"))
+                };
+                let separator = if name.starts_with('-') { "-- " } else { "" };
+                let command = match crate::integrations::gh::BranchInput::parse(name) {
+                    crate::integrations::gh::BranchInput::Github(_) => "create",
+                    crate::integrations::gh::BranchInput::Plain(_) => "add",
+                };
+                return anyhow::anyhow!("{message}\nA local branch exists, but no worktree resolved for it.\nUse: ofsht {command} {separator}{argument}");
+            }
+            Ok(false) => {}
+            Err(error) => return error.context(message),
+        }
+    }
+    let entries = if include_main {
+        list.entries()
+    } else {
+        list.non_main()
+    };
+    if entries.is_empty() {
+        return anyhow::anyhow!("{message}\nNo non-main worktrees are available. Use: ofsht ls");
+    }
+    let names = entries
+        .iter()
+        .map(|entry| format!("  {}", list.display_name(entry, root)))
+        .collect::<Vec<_>>();
+    anyhow::anyhow!("{message}\nAvailable worktrees:\n{}", names.join("\n"))
+}
+
 /// The worktree containing the current directory, normalized like `canonicalize_allow_missing`
 ///
 /// `None` when git cannot tell, for example in a bare repository or a deleted directory.
@@ -188,7 +235,7 @@ pub fn resolve_worktree_target(
                 if canonical_input == canonicalize_allow_missing(Path::new(&main_path)) {
                     anyhow::bail!("Cannot remove main worktree");
                 }
-                anyhow::bail!("Worktree not found: {name}");
+                return Err(worktree_not_found_error(name, &list, root, false));
             }
         }
     }

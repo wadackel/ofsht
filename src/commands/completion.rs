@@ -39,7 +39,7 @@ source (COMPLETE=fish ofsht | psub)
         }
     };
 
-    print!("{instructions}");
+    crate::output::write_stdout(format_args!("{instructions}"))?;
 
     Ok(())
 }
