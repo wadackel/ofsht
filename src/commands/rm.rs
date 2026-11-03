@@ -8,27 +8,37 @@ use std::time::Duration;
 use crate::color;
 use crate::commands::common::resolve_worktree_target;
 use crate::commands::context::CommandContext;
-use crate::config;
 use crate::domain::worktree::WorktreeList;
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
-use crate::integrations::git::{GitClient, RealGitClient};
+use crate::integrations::git::GitClient;
 use crate::path_utils::display_path;
 
-/// Remove a worktree and optionally delete its branch
-/// This is a shared helper function used by both `cmd_rm_many` and `cmd_finish`
-#[allow(clippy::too_many_arguments)]
+/// How `ofsht rm` treats the branch of a removed worktree
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchDeletion {
+    /// `git branch -d`: delete only when fully merged, otherwise keep and warn
+    Safe,
+    /// Leave the branch untouched
+    Keep,
+    /// `git branch -D`: delete even when unmerged
+    Force,
+}
+
+/// Remove a worktree, then handle its branch according to `branch_deletion`
 fn remove_worktree_internal(
-    git: &RealGitClient,
+    ctx: &CommandContext,
     worktree_path: &std::path::Path,
     branch_name: Option<&str>,
     label: &str,
-    config: &config::Config,
-    repo_root: &std::path::Path,
-    color_mode: color::ColorMode,
+    branch_deletion: BranchDeletion,
     mp: &MultiProgress,
 ) -> Result<()> {
+    let git = &ctx.git;
+    let config = &ctx.config;
+    let repo_root = ctx.repo_root.as_path();
+    let color_mode = ctx.color_mode;
     let is_tty = color_mode.should_colorize();
 
     // Header spinner (TTY) or pre-printed header (non-TTY)
@@ -82,18 +92,40 @@ fn remove_worktree_internal(
         ));
     }
 
-    // Try to delete the branch (optional, may fail if branch doesn't exist)
-    if let Some(branch) = branch_name {
-        if git.remove_branch(branch, Some(repo_root)).unwrap_or(false) {
-            hooks::emit_line(
-                mp,
-                is_tty,
-                format!(
-                    "  {}",
-                    color::success(color_mode, format!("Deleted branch: {branch}"))
-                ),
-            );
-        }
+    let Some(branch) = branch_name else {
+        return Ok(());
+    };
+    let force = match branch_deletion {
+        BranchDeletion::Keep => return Ok(()),
+        BranchDeletion::Safe => false,
+        BranchDeletion::Force => true,
+    };
+    if git
+        .remove_branch(branch, force, Some(repo_root))
+        .unwrap_or(false)
+    {
+        hooks::emit_line(
+            mp,
+            is_tty,
+            format!(
+                "  {}",
+                color::success(color_mode, format!("Deleted branch: {branch}"))
+            ),
+        );
+    } else if !force {
+        hooks::emit_line(
+            mp,
+            is_tty,
+            format!(
+                "  {}",
+                color::warn(
+                    color_mode,
+                    format!(
+                        "Kept branch: {branch} (not fully merged; use --force-branch to delete)"
+                    )
+                )
+            ),
+        );
     }
 
     Ok(())
@@ -108,7 +140,11 @@ fn remove_worktree_internal(
 /// - Target resolution fails
 /// - Worktree removal fails
 #[allow(clippy::too_many_lines)]
-pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<()> {
+pub fn cmd_rm_many(
+    targets: &[String],
+    branch_deletion: BranchDeletion,
+    color_mode: color::ColorMode,
+) -> Result<()> {
     // Resolve repo_root, config, and git client once for the whole removal flow.
     let ctx = CommandContext::new_strict(color_mode)?;
 
@@ -218,13 +254,11 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
         let path_label = display_path(worktree_path);
         let label = branch_name.as_deref().unwrap_or(&path_label);
         remove_worktree_internal(
-            &ctx.git,
+            &ctx,
             worktree_path,
             branch_name.as_deref(),
             label,
-            &ctx.config,
-            &ctx.repo_root,
-            color_mode,
+            branch_deletion,
             &mp,
         )?;
     }
@@ -234,13 +268,11 @@ pub fn cmd_rm_many(targets: &[String], color_mode: color::ColorMode) -> Result<(
         let path_label = display_path(worktree_path);
         let label = branch_name.as_deref().unwrap_or(&path_label);
         remove_worktree_internal(
-            &ctx.git,
+            &ctx,
             worktree_path,
             branch_name.as_deref(),
             label,
-            &ctx.config,
-            &ctx.repo_root,
-            color_mode,
+            branch_deletion,
             &mp,
         )?;
 

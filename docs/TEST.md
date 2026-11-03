@@ -184,11 +184,41 @@ ofsht add test-delete
 ofsht rm /private/tmp/demo-ofsht-worktrees/test-delete
 
 # Expected output:
-# Removed worktree: /private/tmp/demo-ofsht-worktrees/test-delete
-# Deleted branch: test-delete
+# Removed test-delete
+#   Deleted branch: test-delete
 
 # Verify
 ofsht ls
+```
+
+#### 5-1. Branch Deletion Modes (`--keep-branch` / `--force-branch`)
+
+```bash
+# Unmerged branch is kept by default
+ofsht add test-unmerged
+(cd ../demo-ofsht-worktrees/test-unmerged && git commit --allow-empty -m "Unmerged work")
+ofsht rm test-unmerged
+# Expected output:
+# Removed test-unmerged
+#   Kept branch: test-unmerged (not fully merged; use --force-branch to delete)
+git branch --list test-unmerged   # Expected: test-unmerged is listed
+
+# --force-branch deletes the unmerged branch
+ofsht add test-unmerged
+ofsht rm --force-branch test-unmerged
+# Expected output includes: Deleted branch: test-unmerged
+git branch --list test-unmerged   # Expected: no output
+
+# --keep-branch keeps even a merged branch
+ofsht add test-keep
+ofsht rm --keep-branch test-keep
+# Expected: no "Deleted branch" line
+git branch --list test-keep       # Expected: test-keep is listed
+git branch -d test-keep
+
+# Both flags together are rejected
+ofsht rm --keep-branch --force-branch test-keep
+# Expected: error "the argument '--keep-branch' cannot be used with '--force-branch'"
 ```
 
 ### 6. Remove Prunable Worktree
@@ -770,6 +800,7 @@ test -f "$tmp/ofsht/SKILL.md"
 This document verified the following features:
 
 - ✅ Basic operations (add, ls, cd, rm)
+- ✅ Branch deletion modes for rm (safe default, `--keep-branch`, `--force-branch`)
 - ✅ Hook functionality (create, delete)
 - ✅ File copying and symlink creation
 - ✅ Sync command (sync hook operations to existing worktrees)

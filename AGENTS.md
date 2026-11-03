@@ -48,6 +48,8 @@ cargo run -- rm .
 cargo run -- rm /path/to/worktree
 cargo run -- rm feature-a feature-b  # Remove multiple worktrees
 cargo run -- rm feature-a . feature-b  # Remove multiple including current
+cargo run -- rm --keep-branch feature-a   # Remove worktree, keep branch
+cargo run -- rm --force-branch feature-a  # Delete branch even if unmerged
 
 # Test open command (must be run inside tmux)
 cargo run -- open            # Open all worktrees as windows
@@ -214,7 +216,7 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **init.rs** (`cmd_init`): Generate global/local config templates
 - **list.rs** (`cmd_list`): Format and display worktree list (interactive vs pipe mode)
 - **open.rs** (`cmd_open`): Open all worktrees in tmux windows or panes, skipping current worktree
-- **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last
+- **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last → branch deletion (`git branch -d` by default, `--keep-branch` / `--force-branch`)
 - **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/rm integration
 - **sync.rs** (`cmd_sync`): Re-apply `hooks.create` to all existing non-main worktrees with `--run`/`--copy`/`--link` filtering
 
