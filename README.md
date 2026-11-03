@@ -452,6 +452,14 @@ the remaining actions. A newly created worktree is preserved for inspection and
 After correcting the hook, run `ofsht sync` to retry setup. Delete-hook failures
 remain warnings and do not prevent removal.
 
+Glob patterns in `copy` and `link` exclude `.git`, Git metadata, and registered
+worktrees, including worktrees nested inside the main repository. Ignored files
+such as `.env` still match. These exclusions also apply when copying a matched
+directory; directory symlinks are not followed during glob copies. A glob directory
+link is skipped with a warning if its contents or symlink targets expose excluded
+paths or cannot be inspected. Literal paths remain explicit requests and keep
+their existing copy/link behavior.
+
 #### Generating Configuration Files
 
 Use `ofsht init` to generate configuration files with default settings:

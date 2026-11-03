@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+use super::files::GlobScope;
 use crate::domain::worktree::WorktreeList;
 use crate::integrations::git::{GitClient, RealGitClient};
+use crate::path_utils::canonicalize_allow_missing;
 
 /// Identity and output options for one worktree's hooks.
 pub struct HookContext {
@@ -11,6 +13,7 @@ pub struct HookContext {
     pub worktree_name: String,
     pub branch: String,
     pub verbose: bool,
+    pub(super) glob_scope: GlobScope,
 }
 
 impl HookContext {
@@ -23,6 +26,14 @@ impl HookContext {
             .context("Failed to resolve hook repository")?;
         let porcelain = RealGitClient.list_worktrees(Some(&repo_root))?;
         let list = WorktreeList::parse(&porcelain, None);
+        let common_dir = RealGitClient::common_git_dir(&repo_root)?;
+        let registry = RealGitClient::worktree_paths(&repo_root)?;
+        let glob_scope = GlobScope::new(
+            registry
+                .into_iter()
+                .filter(|path| canonicalize_allow_missing(path) != repo_root)
+                .chain(std::iter::once(repo_root.join(common_dir))),
+        );
         let entry = list
             .entries()
             .iter()
@@ -38,6 +49,7 @@ impl HookContext {
             worktree_name: list.display_name(entry, root),
             branch: entry.branch.clone().unwrap_or_default(),
             verbose,
+            glob_scope,
         })
     }
 
@@ -49,6 +61,7 @@ impl HookContext {
             worktree_name: "test".to_string(),
             branch: String::new(),
             verbose: false,
+            glob_scope: GlobScope::default(),
         }
     }
 }

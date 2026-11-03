@@ -2,7 +2,7 @@
 #![allow(clippy::must_use_candidate)]
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// What a name means among remote-tracking refs
@@ -94,6 +94,44 @@ pub trait GitClient {
 #[derive(Debug, Default)]
 pub struct RealGitClient;
 
+impl RealGitClient {
+    /// Registered worktree paths without text decoding or porcelain quoting.
+    pub fn worktree_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut cmd = build_command(Some(dir));
+        cmd.args(["worktree", "list", "--porcelain", "-z"]);
+        run_capturing_bytes(cmd, "worktree list")?
+            .split(|byte| *byte == 0)
+            .filter_map(|field| field.strip_prefix(b"worktree "))
+            .map(path_from_git)
+            .collect()
+    }
+
+    /// Git's common directory, relative to `dir` or absolute as reported by Git.
+    pub fn common_git_dir(dir: &Path) -> Result<PathBuf> {
+        let mut cmd = build_command(Some(dir));
+        cmd.args(["rev-parse", "--git-common-dir"]);
+        let output = run_capturing_bytes(cmd, "rev-parse")?;
+        path_from_git(output.strip_suffix(b"\n").unwrap_or(&output))
+    }
+}
+
+fn path_from_git(bytes: &[u8]) -> Result<PathBuf> {
+    if bytes.contains(&0) {
+        anyhow::bail!("Git returned a path containing NUL");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(PathBuf::from(
+            std::str::from_utf8(bytes).context("Git returned a non-UTF-8 path")?,
+        ))
+    }
+}
+
 fn build_command(dir: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
     if let Some(d) = dir {
@@ -106,7 +144,11 @@ fn build_command(dir: Option<&Path>) -> Command {
 /// exit, and return stdout on success. Centralizes the spawn-context, status
 /// check, and bail pattern shared by every `RealGitClient` method that
 /// propagates errors.
-fn run_capturing(mut cmd: Command, op: &str) -> Result<String> {
+fn run_capturing(cmd: Command, op: &str) -> Result<String> {
+    Ok(String::from_utf8_lossy(&run_capturing_bytes(cmd, op)?).to_string())
+}
+
+fn run_capturing_bytes(mut cmd: Command, op: &str) -> Result<Vec<u8>> {
     let output = cmd
         .output()
         .with_context(|| format!("Failed to execute git {op}"))?;
@@ -114,7 +156,7 @@ fn run_capturing(mut cmd: Command, op: &str) -> Result<String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git {op} failed: {stderr}");
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(output.stdout)
 }
 
 /// Whether the user left `branch.autoSetupMerge` unset (`git config --get` exits 1)
@@ -508,5 +550,19 @@ pub mod tests {
         let nonexistent = std::path::PathBuf::from("/nonexistent/path/to/worktree");
         let result = client.last_commit_time(&nonexistent);
         assert!(result.is_none(), "Non-existent path should return None");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_paths_preserve_non_utf8_and_trailing_whitespace() {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = b"/repo/metadata\xff \t\n";
+        let path = path_from_git(bytes).unwrap();
+        assert_eq!(path.as_os_str().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn git_paths_reject_nul() {
+        assert!(path_from_git(b"/repo\0extra").is_err());
     }
 }
