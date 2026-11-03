@@ -87,6 +87,8 @@ cat ../demo-ofsht-worktrees/feature-from-develop/develop.txt
 ```bash
 # Assuming remote branch (use local branch as substitute for testing)
 ofsht add feature-from-remote origin/main
+# Expected: no upstream (the remote branch has another name)
+git rev-parse --abbrev-ref feature-from-remote@{upstream}   # fails: no upstream configured
 # Or from local branch:
 ofsht add feature-from-local main
 ```

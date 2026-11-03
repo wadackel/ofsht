@@ -17,7 +17,7 @@ Thank you for your interest in contributing to ofsht! This document provides gui
 ### Prerequisites
 
 - [Nix](https://nixos.org/) with flakes enabled
-- Git 2.5+ (for worktree support)
+- Git 2.16+ (`git worktree add --no-track`)
 
 #### Installing Development Tools
 
