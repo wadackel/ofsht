@@ -407,7 +407,7 @@ From a linked worktree of a `--separate-git-dir` repository, git has no record o
 3. **Built-in defaults**: Fallback values if no config files exist
 
 > [!IMPORTANT]
-> Integration settings (`[integration.zoxide]`, `[integration.fzf]`, `[integration.tmux]`, `[integration.gh]`) are ONLY read from global config, never from local config. Placing them in `.ofsht.toml` will silently have no effect.
+> Integration settings (`[integration.zoxide]`, `[integration.fzf]`, `[integration.tmux]`, `[integration.gh]`) belong only in global config. Adding them to `.ofsht.toml` causes a parse error. `add`, `create`, `rm`, `sync`, and `open` stop on this error; `ls` and `cd` warn and fall back to default settings for the entire configuration.
 
 #### Local Configuration
 
@@ -426,12 +426,17 @@ run = ["pnpm install", "echo Setup complete!"]
 copy = [".env", ".nvmrc"]
 
 # Create symlinks (source in repo -> destination in worktree)
-link = { ".vscode" = ".vscode" }
+link = [".vscode"]
 
 [hooks.delete]
 # Run commands before worktree deletion
 run = ["echo Cleaning up..."]
 ```
+
+Both `[hooks.create]` and `[hooks.delete]` support `run`, `copy`, and `link` actions.
+Link entries use the same relative path in the main repository and the target
+worktree. Delete hooks execute before Git removes the worktree; Git's removal
+checks still apply afterward.
 
 Run hooks execute in the target worktree. Each receives:
 

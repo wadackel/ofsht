@@ -350,7 +350,7 @@ cat > .ofsht.toml << 'EOF'
 [hooks.create]
 run = ["echo 'Hello from create hook!'", "pwd"]
 copy = []
-link = {}
+link = []
 
 [hooks.delete]
 run = ["echo 'Goodbye from delete hook!'"]
@@ -374,15 +374,17 @@ ofsht --verbose add feature-with-hooks
 
 ### 3. Verify Copy and Link
 
+Create separate files for the copy and link actions:
+
 ```bash
-# Create test file
 echo "test config" > .testrc
+echo "linked config" > .testrc-link
 
 cat > .ofsht.toml << 'EOF'
 [hooks.create]
 run = []
 copy = [".testrc"]
-link = { ".testrc" = ".testrc-link" }
+link = [".testrc-link"]
 
 [worktree]
 dir = "../{repo}-worktrees/{branch}"
@@ -401,13 +403,16 @@ cat ../demo-ofsht-worktrees/feature-copy-link/.testrc-link
 
 ### 4. Verify Delete Hook
 
+The previous step created untracked files in the worktree, so this example uses
+`--force` to remove them along with the worktree.
+
 ```bash
 cat > .ofsht.toml << 'EOF'
 [hooks.delete]
 run = ["echo 'Cleaning up...'", "ls -la"]
 EOF
 
-ofsht --verbose rm /private/tmp/demo-ofsht-worktrees/feature-copy-link
+ofsht --verbose rm --force /private/tmp/demo-ofsht-worktrees/feature-copy-link
 
 # Expected output:
 # Executing delete hooks...
