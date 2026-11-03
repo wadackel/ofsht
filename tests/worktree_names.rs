@@ -265,15 +265,79 @@ fn resolve_reports_ambiguous_directory_name() {
             stderr.contains("Ambiguous worktree name: review"),
             "{stderr}"
         );
-        assert!(stderr.contains("~/tmp/a/review"), "{stderr}");
-        assert!(stderr.contains("~/tmp/b/review"), "{stderr}");
-        assert!(
-            stderr.contains("Specify a branch name or a path"),
-            "{stderr}"
-        );
+        assert!(stderr.contains("~/tmp/a/review [fix/a]"), "{stderr}");
+        assert!(stderr.contains("~/tmp/b/review [fix/b]"), "{stderr}");
+        assert!(stderr.contains("Specify a path"), "{stderr}");
     }
     assert!(fixture.path("tmp/a/review").exists());
     assert!(fixture.path("tmp/b/review").exists());
+}
+
+#[test]
+fn resolve_reports_branch_taken_by_another_worktree() {
+    let fixture = Fixture::new();
+    fixture.add_worktree("slot-1", "dev/myapp-worktrees/slot-1");
+    fixture.add_worktree("slot-2", "dev/myapp-worktrees/slot-2");
+    let slot_1 = fixture.path("dev/myapp-worktrees/slot-1");
+    let slot_2 = fixture.path("dev/myapp-worktrees/slot-2");
+    fixture.git(&["-C", slot_2.to_str().unwrap(), "switch", "-qc", "other"]);
+    fixture.git(&["-C", slot_1.to_str().unwrap(), "switch", "-q", "slot-2"]);
+
+    for command in ["cd", "rm"] {
+        let output = fixture.ofsht(&[command, "slot-2"]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(!output.status.success(), "{command} should fail");
+        assert!(
+            stderr.contains("Ambiguous worktree name: slot-2"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("~/dev/myapp-worktrees/slot-1 [slot-2]"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("~/dev/myapp-worktrees/slot-2 [other]"),
+            "{stderr}"
+        );
+    }
+    assert!(slot_1.exists());
+    assert!(slot_2.exists());
+    assert!(
+        fixture
+            .listed_names()
+            .contains(&"~/dev/myapp-worktrees/slot-2".to_string()),
+        "{:?}",
+        fixture.listed_names()
+    );
+
+    // The path the error asks for removes only the intended worktree
+    let output = fixture.ofsht(&["rm", "--keep-branch", slot_2.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(slot_1.exists());
+    assert!(!slot_2.exists());
+}
+
+#[test]
+fn cd_accepts_path_to_main_worktree() {
+    let fixture = Fixture::new();
+    let wt1 = fixture.path("dev/myapp-worktrees/wt1");
+
+    assert_cd_output(
+        &fixture.ofsht_in(&wt1, &["cd", "../../myapp"]),
+        "../../myapp",
+        &fixture.repo,
+    );
+    let absolute = fixture.repo.to_str().unwrap();
+    assert_cd_output(
+        &fixture.ofsht_in(&wt1, &["cd", absolute]),
+        absolute,
+        &fixture.repo,
+    );
 }
 
 #[test]

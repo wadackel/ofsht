@@ -211,11 +211,10 @@ src/
 
 **Worktree Name Resolution** (`domain/worktree.rs`)
 - The root is derived from `worktree.dir` by `worktree_root_from_template()`: the complete path components before `{branch}`, or `None` when the template has no `{branch}`
-- `WorktreeList::resolve_short_name()`: branch name → path below the root → directory name of worktrees outside the root. Never matches the main worktree and never reads the current directory
+- `WorktreeList::resolve_short_name()`: unions the worktrees on that branch with the directory match (the path below the root, or failing that every worktree outside the root with that directory name). One distinct match is found; several fail with `Ambiguous worktree name`. Never matches the main worktree and never reads the current directory
 - `WorktreeList::resolve_name()`: adds absolute paths and paths relative to the current directory
-- Several outside worktrees sharing a directory name fail with `Ambiguous worktree name`
 - `WorktreeList::short_name()` returns a name only when typing it reaches that worktree; `display_names()` falls back to the path, so `ofsht ls`, fzf, and `ofsht open` agree with what `cd` and `rm` accept
-- `cd` also accepts the main worktree's branch name; `rm` refuses it with `Cannot remove main worktree`
+- `cd` also accepts the main worktree's branch name and path; `rm` refuses both with `Cannot remove main worktree`
 
 **Path Template Expansion** (`commands/add.rs`, `commands/create.rs`)
 - Template variables: `{repo}` and `{branch}`

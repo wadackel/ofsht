@@ -226,31 +226,25 @@ pub fn list_git_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
         candidates_set.insert("@".to_string());
     }
 
-    // Parse the porcelain output once via the unified WorktreeList type.
     let list = crate::domain::worktree::WorktreeList::parse(&stdout, None);
 
-    // Add branch names from non-main worktrees (excludes main automatically).
-    // This naturally fixes a latent inconsistency in the legacy parser
-    // (`worktree_index > 0` vs `> 1`) where main could leak into completion candidates
-    // when entry separators were missing in malformed porcelain.
+    // Branch names stay offered when the config cannot be read, so the root is optional
+    let root = crate::commands::common::get_main_repo_root()
+        .ok()
+        .and_then(|repo_root| {
+            let config = crate::config::Config::load_from_repo_root(&repo_root).ok()?;
+            crate::domain::worktree::worktree_root_from_template(&config.worktree.dir, &repo_root)
+        });
+
+    // Offer a branch name or short name only when typing it reaches the same worktree
     for entry in list.non_main() {
         if let Some(branch) = &entry.branch {
-            candidates_set.insert(branch.clone());
-        }
-    }
-
-    // Add the short names; a worktree without one stays reachable by its branch name
-    if let Ok(repo_root) = crate::commands::common::get_main_repo_root() {
-        if let Ok(config) = crate::config::Config::load_from_repo_root(&repo_root) {
-            let root = crate::domain::worktree::worktree_root_from_template(
-                &config.worktree.dir,
-                &repo_root,
-            );
-            for entry in list.non_main() {
-                if let Some(name) = list.short_name(entry, root.as_deref()) {
-                    candidates_set.insert(name);
-                }
+            if list.reaches(branch, entry, root.as_deref()) {
+                candidates_set.insert(branch.clone());
             }
+        }
+        if let Some(name) = list.short_name(entry, root.as_deref()) {
+            candidates_set.insert(name);
         }
     }
 

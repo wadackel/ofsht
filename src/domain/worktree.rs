@@ -130,16 +130,6 @@ impl WorktreeList {
         }
     }
 
-    /// Find a non-main worktree by branch name (refs/heads/ already stripped).
-    /// Returns the first match. The main worktree is excluded so `find_by_branch("main")`
-    /// returns `None` when "main" is the main worktree's branch.
-    #[must_use]
-    pub fn find_by_branch(&self, branch_name: &str) -> Option<&WorktreeEntry> {
-        self.non_main()
-            .iter()
-            .find(|e| e.branch.as_deref() == Some(branch_name))
-    }
-
     /// Find a non-main worktree by absolute or relative path.
     /// Uses `canonicalize_allow_missing` for both sides so non-existent paths still compare
     /// by their lexical normalization. The main worktree is excluded.
@@ -159,26 +149,29 @@ impl WorktreeList {
         self.entries.iter().find(|e| e.is_active)
     }
 
-    /// Resolve a name without consulting the current directory: branch name, then the path
-    /// below `root`, then the directory name of worktrees outside `root`.
-    /// The main worktree is never matched.
+    /// Resolve a name without consulting the current directory.
+    ///
+    /// The name matches every worktree on that branch, plus the worktree at that path below
+    /// `root`, or failing that every worktree outside `root` with that directory name. One
+    /// distinct match is found; several are ambiguous. The main worktree is never matched.
     #[must_use]
     pub fn resolve_short_name(
         &self,
         name: &str,
         root: Option<&std::path::Path>,
     ) -> NameResolution<'_> {
-        if let Some(entry) = self.find_by_branch(name) {
-            return NameResolution::Found(entry);
-        }
-        if let Some(entry) = root.and_then(|r| self.find_by_path(&r.join(name))) {
-            return NameResolution::Found(entry);
-        }
-
+        let below_root = root.and_then(|r| self.find_by_path(&r.join(name)));
         let mut matches: Vec<&WorktreeEntry> = self
             .non_main()
             .iter()
-            .filter(|e| directory_name(e) == Some(name) && name_below_root(e, root).is_none())
+            .filter(|e| {
+                let by_branch = e.branch.as_deref() == Some(name);
+                let by_directory = below_root.map_or_else(
+                    || directory_name(e) == Some(name) && name_below_root(e, root).is_none(),
+                    |found| found.path == e.path,
+                );
+                by_branch || by_directory
+            })
             .collect();
         match matches.len() {
             0 => NameResolution::NotFound,
@@ -208,18 +201,28 @@ impl WorktreeList {
     ) -> Option<String> {
         let name =
             name_below_root(entry, root).or_else(|| directory_name(entry).map(str::to_string))?;
+        self.reaches(&name, entry, root).then_some(name)
+    }
 
+    /// Whether typing `name` reaches `entry`
+    #[must_use]
+    pub fn reaches(
+        &self,
+        name: &str,
+        entry: &WorktreeEntry,
+        root: Option<&std::path::Path>,
+    ) -> bool {
         // `resolve_short_name` skips the main worktree, but `cd` takes `@` and the main branch
         // to it before any name is resolved
         let main_branch = self.main().and_then(|m| m.branch.as_deref());
-        if name == "@" || main_branch == Some(name.as_str()) {
-            return None;
+        if name == "@" || main_branch == Some(name) {
+            return false;
         }
 
-        match self.resolve_short_name(&name, root) {
-            NameResolution::Found(found) if found.path == entry.path => Some(name),
-            _ => None,
-        }
+        matches!(
+            self.resolve_short_name(name, root),
+            NameResolution::Found(found) if found.path == entry.path
+        )
     }
 
     /// Names to show for `entries()`, in the same order: `@` for the main worktree, the short
@@ -590,37 +593,25 @@ mod tests {
     }
 
     #[test]
-    fn test_worktree_list_find_by_branch_hits() {
-        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
-        let list = WorktreeList::parse(output, None);
-        let entry = list.find_by_branch("feature-a");
-        assert!(entry.is_some());
-        assert_eq!(entry.unwrap().path, "/wt-a");
+    fn test_resolve_short_name_finds_worktree_by_branch() {
+        let list = list_of(&[("/repo", Some("main")), ("/wt-a", Some("feature-a"))]);
+        assert_eq!(
+            found_path(&list.resolve_short_name("feature-a", None)).as_deref(),
+            Some("/wt-a")
+        );
+        assert_eq!(
+            list.resolve_short_name("nonexistent", None),
+            NameResolution::NotFound
+        );
     }
 
     #[test]
-    fn test_worktree_list_find_by_branch_misses() {
-        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
-        let list = WorktreeList::parse(output, None);
-        assert!(list.find_by_branch("nonexistent").is_none());
-    }
-
-    #[test]
-    fn test_worktree_list_find_by_branch_main_excluded() {
-        // find_by_branch must not return the main worktree even if branch matches
-        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-a\nHEAD def67890xxxxxx\nbranch refs/heads/feature-a\n\n";
-        let list = WorktreeList::parse(output, None);
-        assert!(list.find_by_branch("main").is_none());
-    }
-
-    #[test]
-    fn test_worktree_list_find_by_branch_first_match_wins_on_duplicate() {
-        // Abnormal input: same branch on two non-main worktrees — first wins
-        let output = "worktree /repo\nHEAD abc12345xxxxxx\nbranch refs/heads/main\n\nworktree /wt-first\nHEAD def67890xxxxxx\nbranch refs/heads/dup\n\nworktree /wt-second\nHEAD eee99999xxxxxx\nbranch refs/heads/dup\n\n";
-        let list = WorktreeList::parse(output, None);
-        let entry = list.find_by_branch("dup");
-        assert!(entry.is_some());
-        assert_eq!(entry.unwrap().path, "/wt-first");
+    fn test_resolve_short_name_never_matches_main_branch() {
+        let list = list_of(&[("/repo", Some("main")), ("/wt-a", Some("feature-a"))]);
+        assert_eq!(
+            list.resolve_short_name("main", None),
+            NameResolution::NotFound
+        );
     }
 
     #[test]
@@ -771,16 +762,72 @@ mod tests {
         assert_eq!(root, None);
     }
 
+    fn ambiguous_paths(resolution: &NameResolution<'_>) -> Option<Vec<String>> {
+        match resolution {
+            NameResolution::Ambiguous(entries) => {
+                Some(entries.iter().map(|e| e.path.clone()).collect())
+            }
+            _ => None,
+        }
+    }
+
     #[test]
-    fn test_resolve_short_name_prefers_branch_over_root_name() {
+    fn test_resolve_short_name_reports_branch_and_root_name_collision() {
         let list = list_of(&[
             ("/work/myapp", Some("main")),
             ("/work/myapp-worktrees/review", Some("feature/review")),
             ("/elsewhere/other", Some("review")),
         ]);
         assert_eq!(
+            ambiguous_paths(&list.resolve_short_name("review", Some(root()))),
+            Some(vec![
+                "/work/myapp-worktrees/review".to_string(),
+                "/elsewhere/other".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_reports_branch_and_outside_name_collision() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/elsewhere/a/review", Some("review")),
+            ("/elsewhere/b/review", Some("fix/b")),
+        ]);
+        assert_eq!(
+            ambiguous_paths(&list.resolve_short_name("review", Some(root()))),
+            Some(vec![
+                "/elsewhere/a/review".to_string(),
+                "/elsewhere/b/review".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_reports_duplicate_branches() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/wt1", Some("dup")),
+            ("/work/myapp-worktrees/wt2", Some("dup")),
+        ]);
+        assert_eq!(
+            ambiguous_paths(&list.resolve_short_name("dup", Some(root()))),
+            Some(vec![
+                "/work/myapp-worktrees/wt1".to_string(),
+                "/work/myapp-worktrees/wt2".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_resolve_short_name_finds_worktree_matching_branch_and_directory() {
+        let list = list_of(&[
+            ("/work/myapp", Some("main")),
+            ("/work/myapp-worktrees/review", Some("review")),
+        ]);
+        assert_eq!(
             found_path(&list.resolve_short_name("review", Some(root()))).as_deref(),
-            Some("/elsewhere/other")
+            Some("/work/myapp-worktrees/review")
         );
     }
 

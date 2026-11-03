@@ -46,16 +46,22 @@ pub fn get_main_repo_root() -> Result<PathBuf> {
     Ok(repo_root)
 }
 
-/// Error for a directory name shared by several worktrees outside the root
+/// Error for a name that matches several worktrees by branch or directory name
 #[must_use]
 pub fn ambiguous_name_error(name: &str, entries: &[&WorktreeEntry]) -> anyhow::Error {
-    let paths: Vec<String> = entries
+    let candidates: Vec<String> = entries
         .iter()
-        .map(|entry| format!("  {}", display_path(Path::new(&entry.path))))
+        .map(|entry| {
+            let path = display_path(Path::new(&entry.path));
+            entry.branch.as_ref().map_or_else(
+                || format!("  {path}"),
+                |branch| format!("  {path} [{branch}]"),
+            )
+        })
         .collect();
     anyhow::anyhow!(
-        "Ambiguous worktree name: {name}\n{}\nSpecify a branch name or a path",
-        paths.join("\n")
+        "Ambiguous worktree name: {name}\n{}\nSpecify a path",
+        candidates.join("\n")
     )
 }
 
