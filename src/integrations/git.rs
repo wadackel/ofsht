@@ -38,6 +38,10 @@ pub trait GitClient {
     /// and `Err` only when the git process cannot be spawned.
     fn remove_branch(&self, branch: &str, force: bool, dir: Option<&Path>) -> Result<bool>;
 
+    /// Branches treated as the repository's default: the target of `origin/HEAD`,
+    /// `init.defaultBranch`, `main` and `master`, without duplicates.
+    fn default_branches(&self, dir: Option<&Path>) -> Vec<String>;
+
     /// Run `git rev-parse --verify <ref>` and return whether it succeeded.
     ///
     /// Returns `Ok(true)` when the ref exists, `Ok(false)` when git exits
@@ -130,11 +134,40 @@ impl GitClient for RealGitClient {
         let flag = if force { "-D" } else { "-d" };
         let mut cmd = build_command(dir);
         let output = cmd
-            .args(["branch", flag, branch])
+            .args(["branch", flag, "--", branch])
             .output()
             .with_context(|| format!("Failed to execute git branch {flag}"))?;
 
         Ok(output.status.success())
+    }
+
+    fn default_branches(&self, dir: Option<&Path>) -> Vec<String> {
+        let read = |args: &[&str]| {
+            let mut cmd = build_command(dir);
+            cmd.args(args);
+            run_capturing(cmd, "default branch lookup")
+                .ok()
+                .map(|out| out.trim().to_string())
+                .filter(|out| !out.is_empty())
+        };
+        // Any one source can be missing or stale (origin/HEAD exists only after a clone)
+        // The full ref, because --short turns ambiguous names into remotes/origin/<x>
+        let origin_head = read(&["symbolic-ref", "refs/remotes/origin/HEAD"]).and_then(|name| {
+            name.strip_prefix("refs/remotes/origin/")
+                .map(str::to_string)
+        });
+        let configured = read(&["config", "init.defaultBranch"]);
+        let mut branches: Vec<String> = Vec::new();
+        for name in origin_head
+            .into_iter()
+            .chain(configured)
+            .chain(["main".to_string(), "master".to_string()])
+        {
+            if !branches.contains(&name) {
+                branches.push(name);
+            }
+        }
+        branches
     }
 
     fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> Result<bool> {
@@ -245,6 +278,10 @@ pub mod tests {
 
         fn remove_branch(&self, _branch: &str, _force: bool, _dir: Option<&Path>) -> Result<bool> {
             Ok(self.remove_branch_returns)
+        }
+
+        fn default_branches(&self, _dir: Option<&Path>) -> Vec<String> {
+            vec!["main".to_string(), "master".to_string()]
         }
 
         fn branch_exists(&self, _ref_: &str, _dir: Option<&Path>) -> Result<bool> {

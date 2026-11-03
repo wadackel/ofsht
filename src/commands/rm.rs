@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::color;
 use crate::commands::common::{current_worktree_toplevel, resolve_worktree_target};
 use crate::commands::context::CommandContext;
-use crate::domain::worktree::WorktreeList;
+use crate::domain::worktree::{branch_from_template, WorktreeList};
 use crate::hooks;
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
@@ -26,13 +26,26 @@ pub enum BranchDeletion {
     Force,
 }
 
-/// Remove a worktree, then handle its branch according to `branch_deletion`
+/// How `rm` treats branches, resolved once for every target
+struct BranchPolicy {
+    deletion: BranchDeletion,
+    /// Never deleted, even with `--force-branch`: losing unpushed work on them costs the most
+    default_branches: Vec<String>,
+}
+
+impl BranchPolicy {
+    fn is_default(&self, branch: &str) -> bool {
+        self.default_branches.iter().any(|name| name == branch)
+    }
+}
+
+/// Remove a worktree, then handle its branch according to `branch_policy`
 fn remove_worktree_internal(
     ctx: &CommandContext,
     worktree_path: &std::path::Path,
     branch_name: Option<&str>,
     label: &str,
-    branch_deletion: BranchDeletion,
+    branch_policy: &BranchPolicy,
     mp: &MultiProgress,
 ) -> Result<()> {
     let git = &ctx.git;
@@ -92,18 +105,12 @@ fn remove_worktree_internal(
         ));
     }
 
-    let Some(branch) = branch_name else {
-        return Ok(());
-    };
-    let force = match branch_deletion {
+    let force = match branch_policy.deletion {
         BranchDeletion::Keep => return Ok(()),
         BranchDeletion::Safe => false,
         BranchDeletion::Force => true,
     };
-    if git
-        .remove_branch(branch, force, Some(repo_root))
-        .unwrap_or(false)
-    {
+    let deleted = |branch: &str| {
         hooks::emit_line(
             mp,
             is_tty,
@@ -112,20 +119,41 @@ fn remove_worktree_internal(
                 color::success(color_mode, format!("Deleted branch: {branch}"))
             ),
         );
-    } else if !force {
+    };
+    let kept = |message: String| {
         hooks::emit_line(
             mp,
             is_tty,
-            format!(
-                "  {}",
-                color::warn(
-                    color_mode,
-                    format!(
-                        "Kept branch: {branch} (not fully merged; use --force-branch to delete)"
-                    )
-                )
-            ),
+            format!("  {}", color::warn(color_mode, message)),
         );
+    };
+
+    if let Some(branch) = branch_name {
+        if branch_policy.is_default(branch) {
+            kept(format!("Kept branch: {branch} (default branch)"));
+        } else if git
+            .remove_branch(branch, force, Some(repo_root))
+            .unwrap_or(false)
+        {
+            deleted(branch);
+        } else if !force {
+            kept(format!(
+                "Kept branch: {branch} (not fully merged; use --force-branch to delete)"
+            ));
+        }
+    }
+
+    // The branch the worktree was created with; only a merged one goes, and a failure stays
+    // quiet because the name may belong to a branch that is unmerged or in use elsewhere
+    let creation_branch = branch_from_template(&config.worktree.dir, repo_root, worktree_path)
+        .filter(|name| branch_name != Some(name.as_str()) && !branch_policy.is_default(name));
+    if let Some(name) = creation_branch {
+        if git
+            .remove_branch(&name, false, Some(repo_root))
+            .unwrap_or(false)
+        {
+            deleted(&name);
+        }
     }
 
     Ok(())
@@ -152,6 +180,10 @@ pub fn cmd_rm_many(
     let list_stdout = ctx.worktree_list_stdout()?;
     let root = ctx.worktree_root();
     let current = current_worktree_toplevel();
+    let branch_policy = BranchPolicy {
+        deletion: branch_deletion,
+        default_branches: ctx.git.default_branches(Some(&ctx.repo_root)),
+    };
 
     // Resolve targets: CLI args > stdin (when piped) > fzf
     let targets: Vec<String> = if targets.is_empty() {
@@ -260,7 +292,7 @@ pub fn cmd_rm_many(
             worktree_path,
             branch_name.as_deref(),
             label,
-            branch_deletion,
+            &branch_policy,
             &mp,
         )?;
     }
@@ -274,7 +306,7 @@ pub fn cmd_rm_many(
             worktree_path,
             branch_name.as_deref(),
             label,
-            branch_deletion,
+            &branch_policy,
             &mp,
         )?;
 

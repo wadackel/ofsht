@@ -255,6 +255,10 @@ ofsht rm --force-branch feature-awesome
 
 > [!NOTE]
 > By default, `ofsht rm` deletes the worktree's branch with `git branch -d`, so a branch with unmerged commits is kept and a warning is printed. Git checks whether the branch is merged into its upstream when one is set, and into the HEAD of the main worktree otherwise. Branches merged through a GitHub squash or rebase merge look unmerged to Git; delete them with `--force-branch`.
+>
+> The default branch is never deleted, even with `--force-branch`: the branch `origin/HEAD` points to, `init.defaultBranch`, `main`, and `master`. Delete it with `git branch -D` if you mean to.
+>
+> When a long-lived worktree has moved to another branch, the branch it was created with (the one `worktree.dir` gives its path, such as `slot-1`) is also deleted with `git branch -d` unless you pass `--keep-branch`. It stays when it is unmerged or checked out in another worktree.
 
 > [!NOTE]
 > `ofsht rm` can remove worktrees even if their directories have been manually deleted. Git marks such worktrees as "prunable" (still registered in Git but directory missing), and `ofsht` handles them gracefully by cleaning up the Git registration.
