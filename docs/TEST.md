@@ -454,6 +454,21 @@ cycles, ignored files, and literal-path compatibility.
 
 ## Sync Command Verification
 
+### Target Selection and Outcomes
+
+With two linked worktrees, configure a run hook that appends to a marker file.
+Run `ofsht sync <first> --run`: only the first marker should change. Run
+`ofsht sync <first> <path-to-first> --run`: it should change once. From a
+subdirectory of the first worktree, `ofsht sync . --run` should select it.
+
+`ofsht sync <first> missing-name` and a main-worktree target must fail before
+changing either marker. Plain `ofsht sync --run` should still run in both linked
+worktrees. Use a failing hook for one member and remove another member's directory;
+the output must distinguish `Failed`, `Skipped`, and `Synced`, never reporting
+success for the failed or missing member. Repeat with `--color always` and
+`--color never`; stdout stays empty. These cases are automated in
+`cargo test --test sync_targets`.
+
 ### 1. Setup
 
 ```bash

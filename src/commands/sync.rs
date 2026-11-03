@@ -1,15 +1,19 @@
 //! Sync command - Re-apply hook file operations to existing worktrees
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::collections::HashSet;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
 use crate::color;
+use crate::commands::common::{ambiguous_name_error, current_worktree_toplevel};
 use crate::commands::context::CommandContext;
 use crate::config::HookActions;
-use crate::domain::worktree::WorktreeList;
+use crate::domain::worktree::{NameResolution, WorktreeEntry, WorktreeList};
 use crate::hooks;
+use crate::path_utils::canonicalize_allow_missing;
 
 pub struct SyncOptions {
     pub run: bool,
@@ -17,53 +21,65 @@ pub struct SyncOptions {
     pub link: bool,
 }
 
-/// Sync hooks.create actions to all existing non-main worktrees
+/// Reapply create hooks to selected non-main worktrees, or all when targets are empty.
 ///
 /// # Errors
-/// Returns an error if not in a git repository, config loading fails,
-/// git worktree list fails, or any hook execution fails.
+/// Returns an error for invalid targets, configuration errors or failed hooks.
 #[allow(clippy::too_many_lines, clippy::missing_panics_doc)]
-pub fn cmd_sync(options: &SyncOptions, verbose: bool, color_mode: color::ColorMode) -> Result<()> {
+pub fn cmd_sync(
+    targets: &[String],
+    options: &SyncOptions,
+    verbose: bool,
+    color_mode: color::ColorMode,
+) -> Result<()> {
     let &SyncOptions { run, copy, link } = options;
     let ctx = CommandContext::new_strict(color_mode)?;
-
-    // No flags = all actions; otherwise use only the specified ones
+    let root = ctx.worktree_root();
+    let current = current_worktree_toplevel();
+    let list_stdout = ctx.worktree_list_stdout()?;
+    let list = WorktreeList::parse(&list_stdout, current.as_deref());
+    let worktrees = select_worktrees(&list, targets, root.as_deref())?;
     let (do_run, do_copy, do_link) = if !run && !copy && !link {
         (true, true, true)
     } else {
         (run, copy, link)
     };
-
     let create = ctx.config.hooks.create.clone();
     let actions = HookActions {
         run: if do_run { create.run } else { vec![] },
         copy: if do_copy { create.copy } else { vec![] },
         link: if do_link { create.link } else { vec![] },
     };
-
     if actions.run.is_empty() && actions.copy.is_empty() && actions.link.is_empty() {
         eprintln!("No hook actions configured for hooks.create. Nothing to sync.");
         return Ok(());
     }
-
-    let list_stdout = ctx.worktree_list_stdout()?;
-    let list = WorktreeList::parse(&list_stdout, None);
-    let worktrees = list.non_main();
-
     if worktrees.is_empty() {
         eprintln!("No non-main worktrees found. Nothing to sync.");
         return Ok(());
     }
 
     let mp = MultiProgress::new();
-    let is_tty = ctx.color_mode.should_colorize();
-    let mut errors: Vec<String> = vec![];
-
+    let is_tty = std::io::stderr().is_terminal() && ctx.color_mode.should_colorize();
+    let mut failures = 0;
     for entry in worktrees {
-        let path = &entry.path;
-        let label = entry.branch.as_deref().unwrap_or(path.as_str());
-
-        // Header spinner (TTY) or pre-printed header (non-TTY)
+        let path = Path::new(&entry.path);
+        let label = list.display_name(entry, root.as_deref());
+        if !path.exists() {
+            mp.suspend(|| {
+                eprintln!(
+                    "{}",
+                    color::warn(
+                        color_mode,
+                        format!(
+                            "Skipped {label}: worktree directory not found: {}",
+                            path.display()
+                        )
+                    )
+                );
+            });
+            continue;
+        }
         let header_pb = if is_tty {
             let pb = mp.add(ProgressBar::new_spinner());
             pb.set_style(
@@ -75,72 +91,79 @@ pub fn cmd_sync(options: &SyncOptions, verbose: bool, color_mode: color::ColorMo
             pb.enable_steady_tick(Duration::from_millis(100));
             Some(pb)
         } else {
-            eprintln!(
-                "{}",
-                color::success(ctx.color_mode, format!("Synced {label}"))
-            );
+            eprintln!("Syncing {label}");
             None
         };
-
-        let worktree_path = Path::new(path);
-        if !worktree_path.exists() {
-            // Finish header before warning
-            if let Some(pb) = header_pb {
-                pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
-                pb.finish_with_message(format!(
-                    "{}",
-                    color::success(ctx.color_mode, format!("Synced {label}"))
-                ));
-            }
-            hooks::emit_line(
-                &mp,
-                is_tty,
-                format!(
-                    "  {}",
-                    color::warn(
-                        ctx.color_mode,
-                        format!("Worktree directory not found, skipping: {path}")
-                    )
-                ),
-            );
-            continue;
-        }
-
-        let hook_context = hooks::HookContext::new(
-            worktree_path,
-            &ctx.repo_root,
-            ctx.worktree_root().as_deref(),
-            verbose,
-        )?;
-        if let Err(e) =
-            hooks::execute_hooks_with_mp(&actions, &hook_context, ctx.color_mode, "  ", &mp)
-        {
-            errors.push(format!("{path}: {e}"));
-        }
-
-        // Finish header: Syncing → Synced
+        let result = hooks::HookContext::new(path, &ctx.repo_root, root.as_deref(), verbose)
+            .and_then(|context| {
+                hooks::execute_hooks_with_mp(&actions, &context, color_mode, "  ", &mp)
+            });
         if let Some(pb) = header_pb {
-            pb.set_style(ProgressStyle::with_template("{msg}").unwrap());
-            pb.finish_with_message(format!(
-                "{}",
-                color::success(ctx.color_mode, format!("Synced {label}"))
-            ));
+            pb.finish_and_clear();
+        }
+        match result {
+            Ok(()) => mp
+                .suspend(|| eprintln!("{}", color::success(color_mode, format!("Synced {label}")))),
+            Err(error) => {
+                mp.suspend(|| {
+                    eprintln!(
+                        "{}",
+                        color::warn(color_mode, format!("Failed {label}: {error:#}"))
+                    );
+                });
+                failures += 1;
+            }
         }
     }
-
-    if !errors.is_empty() {
-        let n = errors.len();
-        for err in &errors {
-            hooks::emit_line(
-                &mp,
-                is_tty,
-                format!("  {}", color::warn(ctx.color_mode, format!("Error: {err}"))),
-            );
-        }
-        anyhow::bail!("Sync failed for {n} worktree(s)");
+    if failures > 0 {
+        anyhow::bail!("Sync failed for {failures} worktree(s)");
     }
-
     Ok(())
+}
+
+fn select_worktrees<'a>(
+    list: &'a WorktreeList,
+    targets: &[String],
+    root: Option<&Path>,
+) -> Result<Vec<&'a WorktreeEntry>> {
+    if targets.is_empty() {
+        return Ok(list.non_main().iter().collect());
+    }
+    let main = list
+        .main()
+        .context("git worktree list returned no entries")?;
+    let main_path = canonicalize_allow_missing(Path::new(&main.path));
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for target in targets {
+        if target == "@" || main.branch.as_deref() == Some(target.as_str()) {
+            anyhow::bail!("Cannot sync main worktree: {target}");
+        }
+        let entry = if target == "." {
+            list.current()
+                .context("Current directory does not match a registered worktree")?
+        } else {
+            match list.resolve_name(target, root) {
+                NameResolution::Found(entry) => entry,
+                NameResolution::Ambiguous(entries) => {
+                    return Err(ambiguous_name_error(target, &entries))
+                }
+                NameResolution::NotFound => {
+                    if canonicalize_allow_missing(Path::new(target)) == main_path {
+                        anyhow::bail!("Cannot sync main worktree: {target}");
+                    }
+                    anyhow::bail!("Worktree not found: {target}");
+                }
+            }
+        };
+        if entry.path == main.path {
+            anyhow::bail!("Cannot sync main worktree: {target}");
+        }
+        if seen.insert(canonicalize_allow_missing(Path::new(&entry.path))) {
+            selected.push(entry);
+        }
+    }
+    Ok(selected)
 }
 
 #[cfg(test)]
