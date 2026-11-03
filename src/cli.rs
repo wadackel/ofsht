@@ -38,6 +38,10 @@ pub enum Commands {
         /// Skip tmux window creation (overrides config behavior)
         #[arg(long, conflicts_with = "tmux")]
         no_tmux: bool,
+        /// Create the worktree on a detached HEAD without creating a branch; the name only
+        /// sets the worktree's directory
+        #[arg(long)]
+        detach: bool,
     },
     /// Create a new worktree without navigation
     Create {
@@ -48,6 +52,10 @@ pub enum Commands {
         /// Defaults to the HEAD of the worktree the command runs in.
         #[arg(add = ArgValueCompleter::new(list_git_refs))]
         start_point: Option<String>,
+        /// Create the worktree on a detached HEAD without creating a branch; the name only
+        /// sets the worktree's directory
+        #[arg(long)]
+        detach: bool,
     },
     /// List all worktrees
     Ls {

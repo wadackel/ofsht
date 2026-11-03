@@ -37,17 +37,27 @@ fn main() -> Result<()> {
             start_point,
             tmux,
             no_tmux,
+            detach,
         } => commands::add::cmd_new(
             branch.as_deref(),
             start_point.as_deref(),
-            tmux,
-            no_tmux,
+            &commands::add::AddOptions {
+                tmux,
+                no_tmux,
+                detach,
+            },
             color_mode,
         ),
         Commands::Create {
             branch,
             start_point,
-        } => commands::create::cmd_create(branch.as_deref(), start_point.as_deref(), color_mode),
+            detach,
+        } => commands::create::cmd_create(
+            branch.as_deref(),
+            start_point.as_deref(),
+            detach,
+            color_mode,
+        ),
         Commands::Ls { show_path } => commands::list::cmd_list(show_path, color_mode),
         Commands::Rm {
             targets,

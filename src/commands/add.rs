@@ -16,6 +16,16 @@ use crate::integrations::zoxide::{is_zoxide_available, RealZoxideClient};
 use crate::path_utils::normalize_absolute_path;
 use crate::service::{CreateWorktreeRequest, WorktreeService};
 
+/// The flags of `ofsht add`
+pub struct AddOptions {
+    /// `--tmux`
+    pub tmux: bool,
+    /// `--no-tmux`
+    pub no_tmux: bool,
+    /// `--detach`: create the worktree on a detached HEAD without a branch
+    pub detach: bool,
+}
+
 /// Process a PR and return branch name and start point
 fn process_pr(
     git: &impl GitClient,
@@ -172,10 +182,14 @@ const fn should_use_tmux(
 pub fn cmd_new(
     branch: Option<&str>,
     start_point: Option<&str>,
-    tmux: bool,
-    no_tmux: bool,
+    options: &AddOptions,
     color_mode: color::ColorMode,
 ) -> Result<()> {
+    let &AddOptions {
+        tmux,
+        no_tmux,
+        detach,
+    } = options;
     // Resolve branch: CLI arg > stdin (when piped) > error
     let branch_owned = match branch {
         Some(b) => b.to_string(),
@@ -189,6 +203,9 @@ pub fn cmd_new(
 
     // Parse branch input to detect GitHub issue/PR references
     let branch_input = integrations::gh::BranchInput::parse(branch);
+    if detach && matches!(branch_input, integrations::gh::BranchInput::Github(_)) {
+        anyhow::bail!("--detach takes a worktree name, not a GitHub reference: {branch}");
+    }
 
     // Resolve actual branch name and optional start point from GitHub if needed
     let (actual_branch, actual_start_point) = match branch_input {
@@ -263,6 +280,7 @@ pub fn cmd_new(
         current_worktree: current_worktree.as_deref(),
         path_template: &ctx.config.worktree.dir,
         zoxide_enabled,
+        detach,
     };
 
     let result = service.create(&req, |path| {

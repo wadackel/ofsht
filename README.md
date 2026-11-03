@@ -192,6 +192,9 @@ ofsht add release-prep v1.2.0         # From tag
 # Work on a remote branch locally: a local branch tracking it
 ofsht add feature-x origin/feature-x
 
+# A pool member on a detached HEAD, without a branch named after it
+ofsht add --detach slot-1 origin/main
+
 # Create with tmux integration (requires running inside tmux)
 ofsht add feature-awesome --tmux      # Creates worktree and opens new tmux window
 ```

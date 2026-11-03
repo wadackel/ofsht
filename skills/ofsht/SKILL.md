@@ -39,6 +39,10 @@ Run `ofsht --help` or `ofsht <command> --help` when command details are uncertai
   ```bash
   ofsht create feature-branch
   ```
+- Create a worktree on a detached HEAD, without creating a branch (the name only sets the directory):
+  ```bash
+  ofsht add --detach slot-1 origin/main
+  ```
 - Print a worktree path for shell integration:
   ```bash
   ofsht cd feature-branch
