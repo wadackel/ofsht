@@ -531,6 +531,9 @@ ofsht sync --link
 # Only sync file copies
 ofsht sync --copy
 
+# Explicitly replace differing copied files, discarding local edits
+ofsht sync feature-a --copy --overwrite
+
 # Combine flags
 ofsht sync --run --copy
 
@@ -548,7 +551,13 @@ only once. Each worktree reports `Synced`, `Failed`, or `Skipped` after its resu
 is known; any failure makes the command exit nonzero after the remaining targets.
 
 > [!TIP]
-> `ofsht sync` is idempotent. Existing symlinks pointing to the correct target are left unchanged, and files are overwritten safely. You can run it repeatedly without side effects.
+> By default, sync copies missing files, leaves identical files unchanged, and skips differing destinations with a warning. Use `--overwrite` to replace those copied files intentionally, including files inside copied directories. Creation hooks retain their existing copy behavior.
+
+Sync does not traverse destination directory symlinks. A destination file symlink
+is skipped by default; `--overwrite` replaces that link without changing its
+target. Link hooks skip paths tracked by the worktree, including local modifications
+and staged deletions. Already-correct untracked symlinks stay unchanged; unrelated
+untracked regular files remain conflicts.
 
 > [!NOTE]
 > `ofsht sync` re-applies `hooks.create` actions only. It does not execute `hooks.delete` actions. If a worktree directory is missing, it is skipped with a warning.

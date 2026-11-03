@@ -7,6 +7,7 @@ use super::files::{expand_pattern, PatternKind};
 use super::output::emit_line;
 use super::HookContext;
 use crate::color;
+use crate::integrations::git::RealGitClient;
 
 /// Result of ensuring a symlink exists at the destination path
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +146,31 @@ pub(super) fn create_symlinks(
         // Create same relative path in worktree
         let dst_path = worktree_path.join(rel_path);
 
+        if !context.allows_destination(&dst_path, false)? {
+            mp.suspend(|| {
+                eprintln!(
+                    "{indent}{}",
+                    color::warn(
+                        color_mode,
+                        format!(
+                            "Skipped link {}: destination traverses a directory symlink",
+                            rel_path.display()
+                        )
+                    )
+                );
+            });
+            continue;
+        }
+        if RealGitClient::path_is_tracked(worktree_path, rel_path)? {
+            mp.suspend(|| {
+                eprintln!(
+                    "{indent}Skipped link {}: tracked by the worktree",
+                    rel_path.display()
+                );
+            });
+            continue;
+        }
+
         // Create parent directory if needed
         if let Some(parent) = dst_path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -182,6 +208,14 @@ mod tests {
         let dst_dir = std::env::temp_dir().join("test_symlink_glob_dst");
         std::fs::create_dir_all(&src_dir).unwrap();
         std::fs::create_dir_all(&dst_dir).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dst_dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .success());
 
         // Create: skills/skill-a/SKILL.md, skills/skill-b/SKILL.md
         let skill_a = src_dir.join("skills").join("skill-a");

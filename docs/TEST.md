@@ -459,6 +459,20 @@ cycles, ignored files, and literal-path compatibility.
 
 ## Sync Command Verification
 
+### File Preservation
+
+After copying a file into a worktree, edit the destination and run
+`ofsht sync <target> --copy`. The edit must remain with a skip warning. Repeating
+with `--overwrite` must copy the source content. Check both a single-file pattern
+and a directory containing edited and missing files. Identical files stay unchanged.
+
+For link actions, switch a worktree to a branch tracking the target path, modify
+that file, and run `ofsht sync <target> --link`. It must skip the tracked path and
+exit successfully without replacing the file. Staged deletions must stay deleted.
+Untracked regular-file conflicts must still fail. Run
+`cargo test --test sync_preservation` for these cases plus destination ancestor
+symlinks, hard links, pathspec metacharacters, and tracking-query errors.
+
 ### Target Selection and Outcomes
 
 With two linked worktrees, configure a run hook that appends to a marker file.

@@ -3,11 +3,14 @@ use anyhow::{Context, Result};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use indicatif::MultiProgress;
 use std::collections::HashSet;
+use std::fs::{File, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use walkdir::WalkDir;
 
 use super::output::emit_line;
-use super::HookContext;
+use super::{FilePolicy, HookContext};
 use crate::color;
 use crate::path_utils::canonicalize_allow_missing;
 
@@ -193,79 +196,243 @@ pub(super) fn copy_files(
         // Create same relative path in destination
         let dst_path = dest_path.join(rel_path);
 
-        // Create parent directory if needed
-        if let Some(parent) = dst_path.parent() {
+        let skipped = |path: &Path, reason: &str| {
+            let relative = path.strip_prefix(dest_path).unwrap_or(path);
+            mp.suspend(|| {
+                eprintln!(
+                    "{indent}{}",
+                    color::warn(
+                        color_mode,
+                        format!("Skipped copy {}: {reason}", relative.display())
+                    )
+                );
+            });
+        };
+        let report = copy_path(
+            &src_path,
+            &dst_path,
+            (kind == PatternKind::Glob).then_some(&context.glob_scope),
+            context,
+            &skipped,
+        )?;
+        if !report.skipped {
+            let action = if report.changed {
+                "Copied"
+            } else {
+                "Copied (unchanged)"
+            };
+            emit_line(
+                mp,
+                is_tty,
+                format!(
+                    "{indent}{}",
+                    color::success(color_mode, format!("{action}: {}", rel_path.display()))
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct CopyReport {
+    changed: bool,
+    skipped: bool,
+}
+
+fn copy_path(
+    src: &Path,
+    dst: &Path,
+    scope: Option<&GlobScope>,
+    context: &HookContext,
+    skipped: &impl Fn(&Path, &str),
+) -> Result<CopyReport> {
+    let directory = src.is_dir();
+    if !context.allows_destination(dst, directory)? {
+        skipped(dst, "destination traverses a directory symlink");
+        return Ok(CopyReport {
+            skipped: true,
+            ..Default::default()
+        });
+    }
+    if directory {
+        let mut report = CopyReport {
+            changed: !dst.exists(),
+            ..Default::default()
+        };
+        std::fs::create_dir_all(dst)
+            .with_context(|| format!("Failed to create directory: {}", dst.display()))?;
+        for entry in std::fs::read_dir(src)
+            .with_context(|| format!("Failed to read directory: {}", src.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if scope
+                .is_some_and(|scope| scope.excludes(&path) || (path.is_symlink() && path.is_dir()))
+            {
+                continue;
+            }
+            let child = copy_path(&path, &dst.join(entry.file_name()), scope, context, skipped)?;
+            report.changed |= child.changed;
+            report.skipped |= child.skipped;
+        }
+        return Ok(report);
+    }
+    if let FilePolicy::Sync { overwrite } = context.file_policy {
+        match dst.symlink_metadata() {
+            Ok(metadata) => {
+                if metadata.is_dir() {
+                    anyhow::bail!("Cannot copy file over directory: {}", dst.display());
+                }
+                if metadata.is_file()
+                    && files_equal(src, dst).with_context(|| {
+                        format!("Failed to compare {} and {}", src.display(), dst.display())
+                    })?
+                {
+                    return Ok(CopyReport::default());
+                }
+                if !overwrite {
+                    skipped(
+                        dst,
+                        "destination differs or is a symlink; use --overwrite to replace it",
+                    );
+                    return Ok(CopyReport {
+                        skipped: true,
+                        ..Default::default()
+                    });
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to inspect destination: {}", dst.display()))
+            }
+        }
+        if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!("Failed to create parent directory: {}", parent.display())
             })?;
         }
-
-        emit_line(
-            mp,
-            is_tty,
-            format!(
-                "{indent}{}",
-                color::success(color_mode, format!("Copied: {}", rel_path.display()))
-            ),
-        );
-
-        if src_path.is_dir() {
-            copy_dir_all(
-                &src_path,
-                &dst_path,
-                (kind == PatternKind::Glob).then_some(&context.glob_scope),
-            )?;
+        if overwrite {
+            replace_copy(src, dst)?;
         } else {
-            std::fs::copy(&src_path, &dst_path).with_context(|| {
-                format!(
-                    "Failed to copy {} to {}",
-                    src_path.display(),
-                    dst_path.display()
-                )
+            copy_new(src, dst)?;
+        }
+    } else {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create parent directory: {}", parent.display())
             })?;
         }
+        std::fs::copy(src, dst)
+            .with_context(|| format!("Failed to copy {} to {}", src.display(), dst.display()))?;
     }
-
-    Ok(())
+    Ok(CopyReport {
+        changed: true,
+        skipped: false,
+    })
 }
 
-/// Recursively copy a directory
-fn copy_dir_all(src: &Path, dst: &Path, scope: Option<&GlobScope>) -> Result<()> {
-    std::fs::create_dir_all(dst)
-        .with_context(|| format!("Failed to create directory: {}", dst.display()))?;
-
-    for entry in std::fs::read_dir(src)
-        .with_context(|| format!("Failed to read directory: {}", src.display()))?
-    {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if scope.is_some_and(|scope| {
-            scope.excludes(&src_path) || (src_path.is_symlink() && src_path.is_dir())
-        }) {
-            continue;
-        }
-
-        if src_path.is_dir() {
-            copy_dir_all(&src_path, &dst_path, scope)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path).with_context(|| {
-                format!(
-                    "Failed to copy {} to {}",
-                    src_path.display(),
-                    dst_path.display()
-                )
-            })?;
-        }
+fn files_equal(src: &Path, dst: &Path) -> Result<bool> {
+    let mut source =
+        File::open(src).with_context(|| format!("Failed to read {}", src.display()))?;
+    let mut destination =
+        File::open(dst).with_context(|| format!("Failed to read {}", dst.display()))?;
+    let mut remaining = source.metadata()?.len();
+    if remaining != destination.metadata()?.len() {
+        return Ok(false);
     }
+    let mut left = [0; 8192];
+    let mut right = [0; 8192];
+    while remaining > 0 {
+        let size = usize::try_from(remaining.min(8192))?;
+        source.read_exact(&mut left[..size])?;
+        destination.read_exact(&mut right[..size])?;
+        if left[..size] != right[..size] {
+            return Ok(false);
+        }
+        remaining -= u64::try_from(size)?;
+    }
+    Ok(true)
+}
 
-    Ok(())
+fn create_copy_file(path: &Path) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Default creation permissions can expose private source bytes before copying finishes.
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+fn copy_new(src: &Path, dst: &Path) -> Result<()> {
+    let mut source =
+        File::open(src).with_context(|| format!("Failed to read {}", src.display()))?;
+    let mut destination =
+        create_copy_file(dst).with_context(|| format!("Failed to create {}", dst.display()))?;
+    let result = std::io::copy(&mut source, &mut destination)
+        .and_then(|_| destination.set_permissions(source.metadata()?.permissions()));
+    drop(destination);
+    if result.is_err() {
+        let _ = std::fs::remove_file(dst);
+    }
+    result.with_context(|| format!("Failed to copy {} to {}", src.display(), dst.display()))
+}
+
+fn replace_copy(src: &Path, dst: &Path) -> Result<()> {
+    static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
+    let parent = dst.parent().context("Copy destination has no parent")?;
+    for _ in 0..16 {
+        let id = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(".ofsht-copy-{}-{id}", std::process::id()));
+        let mut output = match create_copy_file(&temporary) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error).context("Failed to create temporary copy"),
+        };
+        // Truncating the destination would also change other names hard-linked to its inode.
+        let result = (|| -> Result<()> {
+            let mut input =
+                File::open(src).with_context(|| format!("Failed to read {}", src.display()))?;
+            std::io::copy(&mut input, &mut output)?;
+            output.set_permissions(input.metadata()?.permissions())?;
+            drop(output);
+            std::fs::rename(&temporary, dst)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        return result.with_context(|| format!("Failed to replace {}", dst.display()));
+    }
+    anyhow::bail!("Could not reserve a temporary copy in {}", parent.display())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_files_start_private_before_any_content_is_written() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let file = create_copy_file(&temp.path().join("copy")).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o077, 0);
+    }
+
+    #[test]
+    fn failed_replacement_preserves_destination_and_cleans_temporary_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("destination");
+        std::fs::write(&destination, "local edit").unwrap();
+        assert!(replace_copy(&temp.path().join("missing"), &destination).is_err());
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "local edit");
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn test_detect_pattern_kind_literal() {
