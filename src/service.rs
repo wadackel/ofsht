@@ -7,7 +7,7 @@ use crate::domain::worktree::{
 };
 use crate::integrations::git::{GitClient, RemoteTracking};
 use crate::integrations::zoxide::ZoxideClient;
-use crate::path_utils::canonicalize_allow_missing;
+use crate::path_utils::{canonicalize_allow_missing, display_path};
 
 /// Request describing where and how to create a worktree.
 ///
@@ -167,7 +167,7 @@ fn refuse_nesting(req: &CreateWorktreeRequest<'_>, path: &Path, list: &WorktreeL
     let root = worktree_root_from_template(req.path_template, req.repo_root);
     anyhow::bail!(
         "Cannot create {}: it {relation} the worktree {}",
-        path.display(),
+        display_path(&canonicalize_allow_missing(path)),
         list.display_name(entry, root.as_deref())
     );
 }
