@@ -373,6 +373,33 @@ pub fn branch_from_template(
     (canonicalize_allow_missing(&again) == path).then(|| candidate.to_string())
 }
 
+/// How a path to create sits against an existing worktree
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Nesting {
+    Inside,
+    Contains,
+    Same,
+}
+
+/// Where `path` sits against `worktree`, or `None` when neither holds the other
+///
+/// Both sides are canonicalized, so symlinks, `..`, and case-insensitive file systems compare
+/// as the same directory.
+#[must_use]
+pub fn nesting(path: &std::path::Path, worktree: &std::path::Path) -> Option<Nesting> {
+    let path = canonicalize_allow_missing(path);
+    let worktree = canonicalize_allow_missing(worktree);
+    if path == worktree {
+        Some(Nesting::Same)
+    } else if path.starts_with(&worktree) {
+        Some(Nesting::Inside)
+    } else if worktree.starts_with(&path) {
+        Some(Nesting::Contains)
+    } else {
+        None
+    }
+}
+
 /// The directory that `worktree.dir` places worktrees under
 ///
 /// Follows the expansion in `WorktreeService`. Only complete path components count, so
@@ -1126,6 +1153,20 @@ mod tests {
             ("/work/myapp-worktrees/slot-1", Some("feature")),
         ]);
         assert_eq!(list.cd_name(&list.entries()[0], Some(root())), "main");
+    }
+
+    #[test]
+    fn test_nesting_of_paths() {
+        let wt = std::path::Path::new("/work/myapp-worktrees/slot-1");
+        let at = |p: &str| nesting(std::path::Path::new(p), wt);
+        assert_eq!(
+            at("/work/myapp-worktrees/slot-1/foo"),
+            Some(Nesting::Inside)
+        );
+        assert_eq!(at("/work/myapp-worktrees"), Some(Nesting::Contains));
+        assert_eq!(at("/work/myapp-worktrees/slot-1"), Some(Nesting::Same));
+        assert_eq!(at("/work/myapp-worktrees/slot-2"), None);
+        assert_eq!(at("/work/myapp-worktrees/slot-10"), None);
     }
 
     #[test]
