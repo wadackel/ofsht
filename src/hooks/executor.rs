@@ -109,15 +109,7 @@ pub(super) fn execute_hooks_impl(
     for pattern in &actions.copy {
         action_index += 1;
         let is_last = action_index == total_actions;
-        if let Err(e) = files::copy_files(
-            pattern,
-            &context.repo_root,
-            &context.worktree_path,
-            color_mode,
-            is_last,
-            indent,
-            mp,
-        ) {
+        if let Err(e) = files::copy_files(pattern, context, color_mode, is_last, indent, mp) {
             errors.push(e.to_string());
         }
     }
@@ -126,15 +118,8 @@ pub(super) fn execute_hooks_impl(
     for pattern in &actions.link {
         action_index += 1;
         let is_last = action_index == total_actions;
-        if let Err(e) = symlink::create_symlinks(
-            pattern,
-            &context.repo_root,
-            &context.worktree_path,
-            color_mode,
-            is_last,
-            indent,
-            mp,
-        ) {
+        if let Err(e) = symlink::create_symlinks(pattern, context, color_mode, is_last, indent, mp)
+        {
             errors.push(e.to_string());
         }
     }

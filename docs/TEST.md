@@ -437,6 +437,21 @@ the preserved worktree path. Remove `false` from the configuration, then run
 branch and repeat sync to verify `OFSHT_BRANCH` follows the current checkout.
 After `git switch --detach`, the branch value should be empty.
 
+### 6. Verify Glob Source Boundaries
+
+In an isolated repository, configure `worktree.dir = ".pool/{branch}"` and
+`hooks.create.copy = ["**/*.env"]`. Create one worktree, then place `private.env`
+inside it and `main.env` in the main repository. Creating a second worktree must
+copy only `main.env`; it must not contain `.pool/<first>/private.env`. Repeat with
+`hooks.create.link` and with a worktree created manually outside `.pool`.
+
+With `copy = ["**/HEAD"]`, metadata must be skipped and the destination `.git`
+must remain a file. For directory patterns, verify that recursive copies exclude
+nested worktrees, and that a directory link exposing such a worktree is skipped
+with a warning. A directory containing only ordinary files should still copy or
+link. Run `cargo test --test hook_globs` for symlink aliases, separate Git metadata,
+cycles, ignored files, and literal-path compatibility.
+
 ## Sync Command Verification
 
 ### 1. Setup

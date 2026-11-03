@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::files::{expand_pattern, PatternKind};
 use super::output::emit_line;
+use super::HookContext;
 use crate::color;
 
 /// Result of ensuring a symlink exists at the destination path
@@ -80,15 +81,16 @@ pub(super) fn ensure_symlink(src: &Path, dst: &Path) -> Result<SymlinkResult> {
 /// Create symlinks for a pattern (supports glob)
 pub(super) fn create_symlinks(
     pattern: &str,
-    source_path: &Path,
-    worktree_path: &Path,
+    context: &HookContext,
     color_mode: color::ColorMode,
     _is_last: bool,
     indent: &str,
     mp: &MultiProgress,
 ) -> Result<()> {
     let is_tty = color_mode.should_colorize();
-    let (kind, paths) = expand_pattern(pattern, source_path)?;
+    let source_path = &context.repo_root;
+    let worktree_path = &context.worktree_path;
+    let (kind, paths) = expand_pattern(pattern, source_path, &context.glob_scope)?;
 
     // If literal and not found, warn user
     if kind == PatternKind::Literal && paths.is_empty() {
@@ -111,6 +113,30 @@ pub(super) fn create_symlinks(
 
     // Create symlink for each matched path
     for src_path in paths {
+        if kind == PatternKind::Glob && src_path.is_dir() {
+            let reason = match context.glob_scope.can_link_directory(&src_path) {
+                Ok(true) => None,
+                Ok(false) => Some("it exposes Git metadata or another worktree".to_string()),
+                Err(error) => Some(format!("{error:#}")),
+            };
+            if let Some(reason) = reason {
+                emit_line(
+                    mp,
+                    is_tty,
+                    format!(
+                        "{indent}{}",
+                        color::warn(
+                            color_mode,
+                            format!(
+                                "Skipping glob directory link {}: {reason}",
+                                src_path.display()
+                            )
+                        )
+                    ),
+                );
+                continue;
+            }
+        }
         // Get relative path from source
         let rel_path = src_path
             .strip_prefix(source_path)
@@ -168,8 +194,10 @@ mod tests {
         // Should succeed without EEXIST errors - only directories are symlinked
         let result = create_symlinks(
             "skills/skill-*",
-            &src_dir,
-            &dst_dir,
+            &HookContext {
+                worktree_path: dst_dir.clone(),
+                ..HookContext::for_test(&src_dir)
+            },
             color::ColorMode::Never,
             false,
             "  ",
