@@ -5,6 +5,15 @@ use chrono::{DateTime, Utc};
 use std::path::Path;
 use std::process::Command;
 
+/// What a name means among remote-tracking refs
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteTracking {
+    /// A remote-tracking branch; holds the branch name without the remote
+    Branch(String),
+    /// A symbolic ref such as `origin/HEAD`
+    Symbolic,
+}
+
 /// Git client interface for git operations.
 ///
 /// Methods that take `dir: Option<&Path>` use `dir` as the working
@@ -42,12 +51,15 @@ pub trait GitClient {
     /// `init.defaultBranch`, `main` and `master`, without duplicates.
     fn default_branches(&self, dir: Option<&Path>) -> Vec<String>;
 
-    /// Run `git rev-parse --verify <ref>` and return whether it succeeded.
+    /// Whether `refs/remotes/<name>` exists, and what it is.
+    fn remote_tracking(&self, name: &str, dir: Option<&Path>) -> Option<RemoteTracking>;
+
+    /// Whether the local branch `refs/heads/<name>` exists.
     ///
     /// Returns `Ok(true)` when the ref exists, `Ok(false)` when git exits
     /// non-zero (ref does not exist), and `Err` only when the git process
     /// cannot be spawned.
-    fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> Result<bool>;
+    fn branch_exists(&self, name: &str, dir: Option<&Path>) -> Result<bool>;
 
     /// Run `git <args>` (caller supplies the full argument list including
     /// `rev-parse`) and return stdout on success.
@@ -177,12 +189,43 @@ impl GitClient for RealGitClient {
         branches
     }
 
-    fn branch_exists(&self, ref_: &str, dir: Option<&Path>) -> Result<bool> {
+    fn remote_tracking(&self, name: &str, dir: Option<&Path>) -> Option<RemoteTracking> {
+        let full = format!("refs/remotes/{name}");
+        let succeeds = |args: &[&str]| {
+            let mut cmd = build_command(dir);
+            cmd.args(args)
+                .output()
+                .is_ok_and(|out| out.status.success())
+        };
+        // show-ref takes the exact ref name; rev-parse would also accept suffixes like `~1`
+        if !succeeds(&["show-ref", "--verify", "--quiet", &full]) {
+            return None;
+        }
+        if succeeds(&["symbolic-ref", "-q", &full]) {
+            return Some(RemoteTracking::Symbolic);
+        }
+        // The longest remote name that prefixes it, since a remote name may contain '/'
+        let mut cmd = build_command(dir);
+        cmd.arg("remote");
+        let remotes = run_capturing(cmd, "remote").unwrap_or_default();
+        let branch = remotes
+            .lines()
+            .filter_map(|remote| name.strip_prefix(remote)?.strip_prefix('/'))
+            .min_by_key(|branch| branch.len())?;
+        Some(RemoteTracking::Branch(branch.to_string()))
+    }
+
+    fn branch_exists(&self, name: &str, dir: Option<&Path>) -> Result<bool> {
         let mut cmd = build_command(dir);
         let output = cmd
-            .args(["rev-parse", "--verify", ref_])
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{name}"),
+            ])
             .output()
-            .context("Failed to execute git rev-parse --verify")?;
+            .context("Failed to execute git show-ref --verify")?;
         Ok(output.status.success())
     }
 
@@ -297,7 +340,11 @@ pub mod tests {
             vec!["main".to_string(), "master".to_string()]
         }
 
-        fn branch_exists(&self, _ref_: &str, _dir: Option<&Path>) -> Result<bool> {
+        fn remote_tracking(&self, _name: &str, _dir: Option<&Path>) -> Option<RemoteTracking> {
+            None
+        }
+
+        fn branch_exists(&self, _name: &str, _dir: Option<&Path>) -> Result<bool> {
             Ok(self.branch_exists_value)
         }
 

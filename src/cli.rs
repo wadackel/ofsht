@@ -169,20 +169,15 @@ pub fn list_git_refs(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// List Git branches for completion
+/// List local Git branches for completion of a new worktree's branch name
 ///
 /// Returns empty Vec if git command fails (e.g., not in a git repository)
-/// Includes both local and remote branches
 /// Filters branches by the provided prefix
-/// Excludes symbolic refs like origin/HEAD
 #[must_use]
 pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
     let git = RealGitClient;
-    let Ok(stdout) = git.for_each_ref(
-        &["refs/heads", "refs/remotes"],
-        "%(refname:short)%09%(symref)",
-        None,
-    ) else {
+    // Local branches only: `add` refuses a remote-tracking name, which the start point takes
+    let Ok(stdout) = git.for_each_ref(&["refs/heads"], "%(refname:lstrip=2)", None) else {
         return Vec::new();
     };
 
@@ -190,23 +185,9 @@ pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
 
     stdout
         .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split('\t').collect();
-            let refname = parts.first()?.trim();
-            let symref = parts.get(1).map_or("", |s| s.trim());
-
-            // Filter out symbolic refs (symref column is non-empty)
-            if !symref.is_empty() {
-                return None;
-            }
-
-            // Filter by prefix
-            if !refname.starts_with(&*prefix) {
-                return None;
-            }
-
-            Some(CompletionCandidate::new(refname))
-        })
+        .map(str::trim)
+        .filter(|refname| refname.starts_with(&*prefix))
+        .map(CompletionCandidate::new)
         .collect()
 }
 
@@ -273,14 +254,20 @@ mod tests {
     }
 
     #[test]
-    fn test_list_git_branches_returns_branches_in_git_repo() {
-        // When running in a git repo, should return branch list (at least one branch exists)
-        let result = list_git_branches(OsStr::new(""));
-        // In a valid git repo, there should be at least one branch
-        assert!(
-            !result.is_empty(),
-            "Should return branches when in git repo"
-        );
+    fn test_list_git_branches_matches_local_branches() {
+        // CI checks out a detached HEAD with no local branch, so compare with git rather
+        // than expecting at least one
+        let expected: HashSet<String> = RealGitClient
+            .for_each_ref(&["refs/heads"], "%(refname:lstrip=2)", None)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let result: HashSet<String> = list_git_branches(OsStr::new(""))
+            .iter()
+            .map(|candidate| candidate.get_value().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(result, expected);
     }
 
     #[test]
