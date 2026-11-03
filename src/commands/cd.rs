@@ -1,6 +1,7 @@
 //! Cd command - Navigate to a worktree by branch name
 
 use anyhow::{Context, Result};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::commands::common::ambiguous_name_error;
@@ -30,6 +31,9 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
     };
 
     let Some(name) = resolved_name else {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!("worktree name required (provide as argument or via stdin)");
+        }
         if !ctx.config.integrations.fzf.enabled {
             anyhow::bail!("Provide a worktree name or enable fzf in config");
         }

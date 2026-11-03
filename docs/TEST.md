@@ -812,6 +812,16 @@ ofsht open
 
 ## Stdin Input Verification
 
+From a test repository, run `ofsht cd < /dev/null` and `ofsht rm < /dev/null`.
+Both must exit nonzero promptly without invoking fzf. Repeat with blank piped
+lines. Explicit targets and nonempty piped targets must still work.
+
+In an interactive terminal, create a worktree under a directory containing a
+space and add an untracked marker file there. Run `ofsht cd`, highlight it, and
+verify the preview shows branch/status and the marker above the recent commits.
+Enter must select the exact path; Escape must return without navigating. Verify
+multi-selection in `ofsht rm` using disposable worktrees.
+
 `ofsht` reads positional arguments from stdin when stdin is piped or redirected (auto-detected via TTY check). CLI arguments always take priority. Verify each command from a fresh test repository.
 
 ### 1. Setup

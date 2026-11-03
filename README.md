@@ -335,6 +335,11 @@ echo ignored-name | ofsht add explicit-name   # creates "explicit-name"
 > [!NOTE]
 > Stdin is read only when the input is **not a TTY** (i.e. piped or redirected). On an interactive terminal with no arguments, `cd` / `rm` continue to launch fzf as before, and `add` / `create` exit with `branch name required`.
 
+Empty or blank piped input makes `cd` and `rm` exit with a required-target error;
+it does not launch fzf. The interactive picker previews `git status --short --branch`
+above the ten most recent commits, using the worktree path independently of the
+display text, including paths with spaces.
+
 > [!NOTE]
 > For `add` / `create` (single-argument), only the first non-empty line is used. For `rm` (multi-argument), every non-empty line becomes a target.
 

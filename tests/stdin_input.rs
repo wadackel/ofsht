@@ -162,3 +162,62 @@ fn add_with_closed_stdin_errors_with_branch_required_message() {
         "expected stderr to contain 'branch name required', got: {stderr}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn empty_nonterminal_input_never_invokes_fzf() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let repo = temp.child("repo");
+    init_repo(&repo);
+    let bin = temp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let marker = temp.path().join("fzf-called");
+    let stub = bin.join("fzf");
+    std::fs::write(&stub, "#!/bin/sh\nprintf called > \"$FZF_CALLED\"\n[ \"$1\" = --version ] && echo 0.74 && exit 0\ncat >/dev/null\nexit 130\n").unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for command in ["cd", "rm"] {
+        for input in ["", " \n\t\n"] {
+            let mut cmd = assert_cmd::Command::cargo_bin("ofsht").unwrap();
+            let result = cmd
+                .arg(command)
+                .write_stdin(input)
+                .current_dir(repo.path())
+                .env("XDG_CONFIG_HOME", temp.path().join("config"))
+                .env("FZF_CALLED", &marker)
+                .env(
+                    "PATH",
+                    format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+                )
+                .timeout(Duration::from_secs(3))
+                .assert()
+                .failure();
+            assert!(String::from_utf8_lossy(&result.get_output().stderr).contains("required"));
+            assert!(result.get_output().stdout.is_empty());
+            assert!(!marker.exists(), "fzf was invoked for {command}");
+        }
+    }
+}
+
+#[test]
+fn cd_and_rm_explicit_targets_win_over_stdin() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let repo = temp.child("repo");
+    init_repo(&repo);
+    for (args, input) in [
+        (vec!["add", "explicit"], ""),
+        (vec!["cd", "explicit"], "missing-name\n"),
+        (vec!["rm", "explicit"], "missing-name\n"),
+    ] {
+        assert_cmd::Command::cargo_bin("ofsht")
+            .unwrap()
+            .args(args)
+            .write_stdin(input)
+            .current_dir(repo.path())
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
+            .assert()
+            .success();
+    }
+    assert!(!temp.path().join("repo-worktrees/explicit").exists());
+}
