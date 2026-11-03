@@ -54,6 +54,7 @@ fn main() -> Result<()> {
             keep_branch,
             force_branch,
             force,
+            dry_run,
         } => {
             let branch_deletion = if keep_branch {
                 commands::rm::BranchDeletion::Keep
@@ -62,7 +63,12 @@ fn main() -> Result<()> {
             } else {
                 commands::rm::BranchDeletion::Safe
             };
-            commands::rm::cmd_rm_many(&targets, branch_deletion, force, color_mode)
+            let options = commands::rm::RmOptions {
+                branch_deletion,
+                force,
+                dry_run,
+            };
+            commands::rm::cmd_rm_many(&targets, &options, color_mode)
         }
         Commands::Cd { name } => commands::cd::cmd_goto(name.as_deref(), color_mode),
         Commands::Init {

@@ -73,6 +73,10 @@ pub enum Commands {
         /// still refused
         #[arg(long)]
         force: bool,
+        /// Print what would be removed, which hooks would run, and what would happen to each
+        /// branch, without changing anything; exits 1 when any target would be refused
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Navigate to a worktree (prints path)
     /// When name is not provided, fzf will be used for interactive selection (if enabled)
