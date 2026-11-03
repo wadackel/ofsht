@@ -226,7 +226,9 @@ pub(super) fn directory_arg(path: &Path) -> Result<OsString> {
     if path.as_os_str().as_encoded_bytes().contains(&0) {
         bail!("Invalid NUL in tmux directory");
     }
-    let path = canonicalize_allow_missing(path);
+    let path = path
+        .canonicalize()
+        .context("Failed to resolve tmux directory")?;
     #[cfg(unix)]
     {
         use std::os::unix::ffi::{OsStrExt, OsStringExt};

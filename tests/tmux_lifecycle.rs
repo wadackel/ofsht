@@ -335,6 +335,7 @@ fn failed_removal_keeps_window_but_prior_success_is_cleaned() {
     let out = f.run(&["rm", "one", "two"]);
     assert!(!out.status.success());
     assert!(!one.exists() && two.exists());
+    assert_eq!(stderr(&out).matches("Error:").count(), 1);
     assert!(!f.windows(&f.session).contains(&w1));
     assert!(f.windows(&f.session).contains(&w2));
 }
@@ -645,4 +646,81 @@ fn invocation_via_shared_session_with_stale_environment_abstains() {
     assert!(!path.exists());
     assert!(f.windows(&f.session).contains(&window));
     assert!(std::fs::read_to_string(log).unwrap().contains("shared"));
+}
+
+#[test]
+fn add_preserves_symlink_parent_path_semantics() {
+    for mode in ["window", "pane"] {
+        let f = Fixture::new();
+        let external = f.temp.path().join("external");
+        std::fs::create_dir_all(external.join("child")).unwrap();
+        std::os::unix::fs::symlink(external.join("child"), f.repo.join("alias")).unwrap();
+        std::fs::write(
+            f.repo.join(".ofsht.toml"),
+            "[worktree]\ndir='alias/../pool/{branch}'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            f.temp.path().join("config/ofsht/config.toml"),
+            format!("[integration.zoxide]\nenabled=false\n[integration.tmux]\ncreate='{mode}'\n"),
+        )
+        .unwrap();
+        let out = f.run(&["add", "one", "--tmux"]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let expected = external.join("pool/one").canonicalize().unwrap();
+        let panes = f.tmux(&["list-panes", "-s", "-t", &f.session, "-F", "#{pane_id}"]);
+        assert!(panes.lines().any(|pane| Path::new(&f.tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{pane_current_path}"
+        ])) == expected));
+    }
+}
+
+#[test]
+fn partial_failure_is_reported_before_caller_window_closes() {
+    let f = Fixture::new();
+    let one = f.worktree("one");
+    let two = f.worktree("two");
+    f.tmux(&[
+        "respawn-pane",
+        "-k",
+        "-t",
+        &f.pane,
+        "-c",
+        one.to_str().unwrap(),
+        "exec /bin/sh",
+    ]);
+    let (second, _) = f.window_at(&two);
+    f.enable_cleanup();
+    f.hook("case \"$OFSHT_WORKTREE_NAME\" in two) touch untracked ;; esac");
+    let errors = f.temp.path().join("errors");
+    let binary = assert_cmd::cargo::cargo_bin("ofsht");
+    let command = format!(
+        "(cd {} && {} rm one two) > /dev/null 2> {} & wait",
+        quoted(&f.repo),
+        quoted(&binary),
+        quoted(&errors)
+    );
+    f.tmux(&["send-keys", "-t", &f.pane, &command, "Enter"]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let windows = f.windows(&f.session);
+        if !windows.contains(&f.window) {
+            assert!(windows.contains(&second));
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{}",
+            std::fs::read_to_string(&errors).unwrap_or_default()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    let diagnostic = std::fs::read_to_string(errors).unwrap();
+    assert!(!one.exists() && two.exists());
+    assert!(diagnostic.contains("Error:"), "{diagnostic}");
+    assert_eq!(diagnostic.matches("Error:").count(), 1);
 }

@@ -632,7 +632,9 @@ pub fn cmd_rm_many(
         Ok(())
     })();
     if let Some(plan) = &cleanup {
+        let result = result.map_err(crate::output::report_before_cleanup);
         plan.finish(&removed);
+        return result;
     }
     result
 }
