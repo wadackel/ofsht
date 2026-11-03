@@ -2,6 +2,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+use crate::domain::worktree::expand_worktree_path;
 use crate::integrations::git::GitClient;
 use crate::integrations::zoxide::ZoxideClient;
 
@@ -54,23 +55,8 @@ where
     where
         F: FnOnce(&Path) -> Result<()>,
     {
-        let repo_name = req
-            .repo_root
-            .file_name()
-            .and_then(|n| n.to_str())
+        let worktree_path = expand_worktree_path(req.path_template, req.repo_root, req.branch)
             .context("Failed to get repository name")?;
-
-        #[allow(clippy::literal_string_with_formatting_args)]
-        let expanded = req
-            .path_template
-            .replace("{repo}", repo_name)
-            .replace("{branch}", req.branch);
-
-        let worktree_path = if expanded.starts_with('/') {
-            PathBuf::from(&expanded)
-        } else {
-            req.repo_root.join(&expanded)
-        };
 
         self.git_client.create_worktree(
             req.branch,

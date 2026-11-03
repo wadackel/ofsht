@@ -257,6 +257,62 @@ fn directory_name(entry: &WorktreeEntry) -> Option<&str> {
         .and_then(|name| name.to_str())
 }
 
+/// The path `worktree.dir` gives a worktree for `branch`
+///
+/// `{repo}` is the repository root's directory name; a relative result is resolved from the
+/// repository root. `None` when the root has no usable name.
+#[must_use]
+pub fn expand_worktree_path(
+    template: &str,
+    repo_root: &std::path::Path,
+    branch: &str,
+) -> Option<std::path::PathBuf> {
+    let repo_name = repo_root.file_name()?.to_str()?;
+    #[allow(clippy::literal_string_with_formatting_args)]
+    let expanded = template
+        .replace("{repo}", repo_name)
+        .replace("{branch}", branch);
+    Some(if expanded.starts_with('/') {
+        std::path::PathBuf::from(expanded)
+    } else {
+        repo_root.join(expanded)
+    })
+}
+
+/// The branch whose `worktree.dir` expansion is `worktree_path`, if any
+///
+/// Takes the part of the path where `{branch}` sits and accepts it only when expanding the
+/// template with it gives the same path again.
+#[must_use]
+pub fn branch_from_template(
+    template: &str,
+    repo_root: &std::path::Path,
+    worktree_path: &std::path::Path,
+) -> Option<String> {
+    let repo_name = repo_root.file_name()?.to_str()?;
+    #[allow(clippy::literal_string_with_formatting_args)]
+    let expanded = template.replace("{repo}", repo_name);
+    let (before, after) = expanded.split_once("{branch}")?;
+    let (directory, partial) = before.split_at(before.rfind('/').map_or(0, |index| index + 1));
+    let base = if directory.starts_with('/') {
+        std::path::PathBuf::from(directory)
+    } else {
+        repo_root.join(directory)
+    };
+
+    let path = canonicalize_allow_missing(worktree_path);
+    let relative = path.strip_prefix(canonicalize_allow_missing(&base)).ok()?;
+    let candidate = relative
+        .to_str()?
+        .strip_prefix(partial)?
+        .strip_suffix(after)?;
+    if candidate.is_empty() {
+        return None;
+    }
+    let again = expand_worktree_path(template, repo_root, candidate)?;
+    (canonicalize_allow_missing(&again) == path).then(|| candidate.to_string())
+}
+
 /// The directory that `worktree.dir` places worktrees under
 ///
 /// Follows the expansion in `WorktreeService`. Only complete path components count, so
@@ -716,6 +772,51 @@ mod tests {
             NameResolution::Found(entry) => Some(entry.path.clone()),
             _ => None,
         }
+    }
+
+    #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn test_branch_from_template_inverts_the_expansion() {
+        let repo = std::path::Path::new("/work/myapp");
+        let default = "../{repo}-worktrees/{branch}";
+        let branch = |template: &str, path: &str| {
+            branch_from_template(template, repo, std::path::Path::new(path))
+        };
+        assert_eq!(
+            branch(default, "/work/myapp-worktrees/slot-1").as_deref(),
+            Some("slot-1")
+        );
+        assert_eq!(
+            branch(default, "/work/myapp-worktrees/feature/foo").as_deref(),
+            Some("feature/foo")
+        );
+        assert_eq!(
+            branch("../{repo}-{branch}", "/work/myapp-slot-1").as_deref(),
+            Some("slot-1")
+        );
+        assert_eq!(
+            branch("/pool/{repo}/{branch}/src", "/pool/myapp/slot-1/src").as_deref(),
+            Some("slot-1")
+        );
+        assert_eq!(branch(default, "/elsewhere/slot-1"), None);
+        assert_eq!(branch(default, "/work/myapp-worktrees"), None);
+        assert_eq!(branch("../fixed", "/work/fixed"), None);
+    }
+
+    #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn test_expand_worktree_path_resolves_relative_templates_from_the_root() {
+        let repo = std::path::Path::new("/work/myapp");
+        assert_eq!(
+            expand_worktree_path("../{repo}-worktrees/{branch}", repo, "a/b"),
+            Some(std::path::PathBuf::from(
+                "/work/myapp/../myapp-worktrees/a/b"
+            ))
+        );
+        assert_eq!(
+            expand_worktree_path("/pool/{branch}", repo, "x"),
+            Some(std::path::PathBuf::from("/pool/x"))
+        );
     }
 
     #[test]
