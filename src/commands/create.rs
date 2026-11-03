@@ -24,6 +24,7 @@ use crate::service::{CreateWorktreeRequest, WorktreeService};
 pub fn cmd_create(
     branch: Option<&str>,
     start_point: Option<&str>,
+    detach: bool,
     color_mode: color::ColorMode,
 ) -> Result<()> {
     // Resolve branch: CLI arg > stdin (when piped) > error
@@ -70,6 +71,7 @@ pub fn cmd_create(
         current_worktree: current_worktree.as_deref(),
         path_template: &ctx.config.worktree.dir,
         zoxide_enabled,
+        detach,
     };
 
     let result = service.create(&req, |path| {

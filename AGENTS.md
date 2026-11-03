@@ -52,6 +52,7 @@ cargo run -- rm --keep-branch feature-a   # Remove worktree, keep branch
 cargo run -- rm --force-branch feature-a  # Delete branch even if unmerged
 cargo run -- rm --force feature-a  # Remove even with modified files or submodules (not locked ones)
 cargo run -- rm --dry-run feature-a  # Print the removal plan, change nothing (exit 1 if refused)
+cargo run -- add --detach slot-1 origin/main  # Detached worktree named slot-1, no branch created
 
 # Test open command (must be run inside tmux)
 cargo run -- open            # Open all worktrees as windows

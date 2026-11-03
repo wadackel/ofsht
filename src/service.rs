@@ -22,6 +22,8 @@ pub struct CreateWorktreeRequest<'a> {
     pub current_worktree: Option<&'a Path>,
     pub path_template: &'a str,
     pub zoxide_enabled: bool,
+    /// `--detach`: `branch` only names the worktree, and no branch is created
+    pub detach: bool,
 }
 
 /// Worktree service that coordinates git creation and zoxide registration.
@@ -64,9 +66,22 @@ where
         let worktree_path = expand_worktree_path(req.path_template, req.repo_root, req.branch)
             .context("Failed to get repository name")?;
 
+        let dir = req.current_worktree.unwrap_or(req.repo_root);
+        if req.detach {
+            // Without a branch, git no longer checks the name, and it becomes a path as given.
+            // `--branch` expands `@{-N}` before checking, so the name must come back unchanged
+            let invalid = || format!("Invalid worktree name: {:?}", req.branch);
+            let checked = self
+                .git_client
+                .run(&["check-ref-format", "--branch", req.branch], Some(dir))
+                .with_context(invalid)?;
+            if checked.trim_end_matches('\n') != req.branch {
+                anyhow::bail!(invalid());
+            }
+        }
         let porcelain = self.git_client.list_worktrees(Some(req.repo_root))?;
         let list = WorktreeList::parse(&porcelain, None);
-        if req.start_point.is_none() {
+        if req.start_point.is_none() && !req.detach {
             if self
                 .git_client
                 .branch_exists(req.branch, Some(req.repo_root))?
@@ -88,12 +103,17 @@ where
         }
         refuse_nesting(req, &worktree_path, &list)?;
 
-        self.git_client.create_worktree(
-            req.branch,
-            &worktree_path,
-            req.start_point,
-            Some(req.current_worktree.unwrap_or(req.repo_root)),
-        )?;
+        if req.detach {
+            self.git_client
+                .create_detached_worktree(&worktree_path, req.start_point, Some(dir))?;
+        } else {
+            self.git_client.create_worktree(
+                req.branch,
+                &worktree_path,
+                req.start_point,
+                Some(dir),
+            )?;
+        }
 
         on_after_git(&worktree_path)?;
 
@@ -218,6 +238,7 @@ mod tests {
             current_worktree: None,
             path_template,
             zoxide_enabled,
+            detach: false,
         }
     }
 
@@ -247,6 +268,7 @@ mod tests {
             current_worktree: None,
             path_template: "../{repo}-worktrees/{branch}",
             zoxide_enabled: false,
+            detach: false,
         };
 
         let result = service.create(&req, |_| Ok(()));

@@ -514,3 +514,112 @@ fn explicit_auto_setup_merge_is_respected() {
 
     assert_eq!(upstream(&fixture, "bar").as_deref(), Some("origin/main"));
 }
+
+fn is_detached(path: &Path) -> bool {
+    Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(path)
+        .status()
+        .is_ok_and(|status| !status.success())
+}
+
+#[test]
+fn create_detach_makes_detached_worktree_without_branch() {
+    let fixture = Fixture::new();
+
+    assert_success(&fixture.ofsht(&["create", "--detach", "slot-1", "origin/foo"]));
+
+    let slot_1 = fixture.worktree("slot-1");
+    assert!(is_detached(&slot_1));
+    assert_eq!(
+        git_output(&slot_1, &["rev-parse", "HEAD"]),
+        rev(&fixture, "origin/foo")
+    );
+    assert_ne!(rev(&fixture, "origin/foo"), rev(&fixture, "main"));
+    assert!(!branch_exists(&fixture, "slot-1"));
+}
+
+#[test]
+fn create_detach_with_name_of_checked_out_branch_succeeds() {
+    let fixture = Fixture::new();
+
+    assert_success(&fixture.ofsht(&["create", "--detach", "main"]));
+
+    assert!(is_detached(&fixture.worktree("main")));
+}
+
+#[test]
+fn add_detach_without_start_point_uses_current_worktree_head() {
+    let fixture = Fixture::new();
+    let slot_1 = diverged_slot(&fixture);
+
+    assert_success(&fixture.ofsht_in(&slot_1, &["add", "--detach", "slot-2"]));
+
+    let slot_2 = fixture.worktree("slot-2");
+    assert!(is_detached(&slot_2));
+    assert_eq!(
+        git_output(&slot_2, &["rev-parse", "HEAD"]),
+        rev(&fixture, "feature")
+    );
+    assert!(!branch_exists(&fixture, "slot-2"));
+}
+
+#[test]
+fn add_detach_runs_create_hooks() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.repo.join(".ofsht.toml"),
+        "[hooks.create]\nrun = [\"touch hooked.txt\"]\n",
+    )
+    .unwrap();
+
+    assert_success(&fixture.ofsht(&["create", "--detach", "slot-1", "main"]));
+
+    assert!(fixture.worktree("slot-1").join("hooked.txt").exists());
+}
+
+#[test]
+fn add_detach_rejects_github_reference() {
+    let fixture = Fixture::new();
+
+    let output = fixture.ofsht(&["add", "--detach", "#1"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("--detach takes a worktree name"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn create_detach_rejects_invalid_name() {
+    let fixture = Fixture::new();
+    // A previous checkout, so that `@{-1}` names a branch
+    git(&fixture.repo, &["switch", "-q", "-c", "previous"]);
+    git(&fixture.repo, &["switch", "-q", "main"]);
+
+    for name in ["", "../x", "/abs", "-x", "@{-1}"] {
+        let output = fixture.ofsht(&["create", "--detach", "--", name]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{name:?}: {stderr}");
+        assert!(
+            stderr.contains("Invalid worktree name"),
+            "{name:?}: {stderr}"
+        );
+    }
+    assert!(!fixture.temp.path().join("app-worktrees").exists());
+    assert!(!fixture.temp.path().join("x").exists());
+}
+
+#[test]
+fn add_detach_inside_existing_worktree_is_refused() {
+    let fixture = Fixture::new();
+    create_slot_without_its_branch(&fixture, "slot-1");
+
+    let output = fixture.ofsht(&["create", "--detach", "slot-1/foo", "main"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("inside the worktree slot-1"), "{stderr}");
+}

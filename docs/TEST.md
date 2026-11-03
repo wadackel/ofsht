@@ -93,6 +93,16 @@ git rev-parse --abbrev-ref feature-from-remote@{upstream}   # fails: no upstream
 ofsht add feature-from-local main
 ```
 
+#### 2-3b. Create a Detached Worktree
+
+```bash
+ofsht create --detach slot-1 main
+# Expected: ../demo-ofsht-worktrees/slot-1 on a detached HEAD at main, and no branch slot-1
+git -C ../demo-ofsht-worktrees/slot-1 symbolic-ref -q HEAD || echo detached
+git branch --list slot-1   # prints nothing
+ofsht create --detach ''   # Expected: Invalid worktree name
+```
+
 #### 2-4. Create from Tag
 
 ```bash

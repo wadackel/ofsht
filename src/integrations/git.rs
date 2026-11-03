@@ -34,6 +34,14 @@ pub trait GitClient {
         dir: Option<&Path>,
     ) -> Result<()>;
 
+    /// Run `git worktree add --detach <path> [<start_point>]`.
+    fn create_detached_worktree(
+        &self,
+        path: &Path,
+        start_point: Option<&str>,
+        dir: Option<&Path>,
+    ) -> Result<()>;
+
     /// Run `git worktree list --porcelain`.
     fn list_worktrees(&self, dir: Option<&Path>) -> Result<String>;
 
@@ -147,6 +155,21 @@ impl GitClient for RealGitClient {
             cmd.arg("-b").arg(branch).arg(path);
         }
 
+        run_capturing(cmd, "worktree add")?;
+        Ok(())
+    }
+
+    fn create_detached_worktree(
+        &self,
+        path: &Path,
+        start_point: Option<&str>,
+        dir: Option<&Path>,
+    ) -> Result<()> {
+        let mut cmd = build_command(dir);
+        cmd.args(["worktree", "add", "--detach"]).arg(path);
+        if let Some(start) = start_point {
+            cmd.arg(start);
+        }
         run_capturing(cmd, "worktree add")?;
         Ok(())
     }
@@ -330,6 +353,18 @@ pub mod tests {
         fn create_worktree(
             &self,
             _branch: &str,
+            _path: &Path,
+            _start_point: Option<&str>,
+            _dir: Option<&Path>,
+        ) -> Result<()> {
+            if self.create_should_fail {
+                anyhow::bail!("Mock git create worktree failure");
+            }
+            Ok(())
+        }
+
+        fn create_detached_worktree(
+            &self,
             _path: &Path,
             _start_point: Option<&str>,
             _dir: Option<&Path>,
