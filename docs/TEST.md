@@ -363,7 +363,7 @@ EOF
 ### 2. Verify Create Hook
 
 ```bash
-ofsht add feature-with-hooks
+ofsht --verbose add feature-with-hooks
 
 # Expected output:
 # Created worktree at: /private/tmp/demo-ofsht-worktrees/feature-with-hooks
@@ -407,7 +407,7 @@ cat > .ofsht.toml << 'EOF'
 run = ["echo 'Cleaning up...'", "ls -la"]
 EOF
 
-ofsht rm /private/tmp/demo-ofsht-worktrees/feature-copy-link
+ofsht --verbose rm /private/tmp/demo-ofsht-worktrees/feature-copy-link
 
 # Expected output:
 # Executing delete hooks...
@@ -416,6 +416,26 @@ ofsht rm /private/tmp/demo-ofsht-worktrees/feature-copy-link
 # Removed worktree: /private/tmp/demo-ofsht-worktrees/feature-copy-link
 # Deleted branch: feature-copy-link
 ```
+
+### 5. Verify Hook Output, Environment, and Failure Status
+
+```bash
+cat > .ofsht.toml <<'EOF'
+[hooks.create]
+run = ["printf '%s\\n' \"$OFSHT_WORKTREE_NAME:$OFSHT_BRANCH\"", "printf out; printf err >&2; printf end", "false", "touch later-action-ran"]
+EOF
+
+ofsht --verbose add hook-failure > /tmp/ofsht-hook-stdout
+echo "$?"  # 1
+cat /tmp/ofsht-hook-stdout  # empty: shell navigation must not run
+test -f ../demo-ofsht-worktrees/hook-failure/later-action-ran
+```
+
+Stderr includes `hook-failure:hook-failure`, `outerrend`, the failed command, and
+the preserved worktree path. Remove `false` from the configuration, then run
+`ofsht --verbose sync --run`; it should succeed. Switch the worktree to another
+branch and repeat sync to verify `OFSHT_BRANCH` follows the current checkout.
+After `git switch --detach`, the branch value should be empty.
 
 ## Sync Command Verification
 

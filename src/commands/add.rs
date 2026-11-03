@@ -1,6 +1,6 @@
 //! Add command - Create new worktrees with GitHub integration and tmux support
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
@@ -104,6 +104,7 @@ pub fn cmd_new(
     branch: Option<&str>,
     start_point: Option<&str>,
     options: &AddOptions,
+    verbose: bool,
     color_mode: color::ColorMode,
 ) -> Result<()> {
     let &AddOptions {
@@ -223,14 +224,14 @@ pub fn cmd_new(
             || !hook_actions.copy.is_empty()
             || !hook_actions.link.is_empty()
         {
-            hooks::execute_hooks_lenient_with_mp(
+            let hook_context = hooks::HookContext::new(path, &ctx.repo_root, ctx.worktree_root().as_deref(), verbose)?;
+            hooks::execute_hooks_with_mp(
                 hook_actions,
-                path,
-                &ctx.repo_root,
+                &hook_context,
                 color_mode,
                 "  ",
                 &mp,
-            );
+            ).with_context(|| format!("Worktree preserved at {} after hook failure; use ofsht sync to retry setup", path.display()))?;
         }
 
         Ok(())

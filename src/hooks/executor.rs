@@ -1,10 +1,9 @@
 #![allow(clippy::missing_errors_doc)]
 use anyhow::Result;
 use indicatif::MultiProgress;
-use std::path::Path;
 
 use super::output::emit_line;
-use super::{files, runner, symlink};
+use super::{files, runner, symlink, HookContext};
 use crate::color;
 use crate::config::HookActions;
 
@@ -15,13 +14,12 @@ use crate::config::HookActions;
 #[cfg(test)]
 pub(super) fn execute_hooks(
     actions: &HookActions,
-    worktree_path: &Path,
-    source_path: &Path,
+    context: &HookContext,
     color_mode: color::ColorMode,
     indent: &str,
 ) -> Result<()> {
     let mp = MultiProgress::new();
-    execute_hooks_with_mp(actions, worktree_path, source_path, color_mode, indent, &mp)
+    execute_hooks_with_mp(actions, context, color_mode, indent, &mp)
 }
 
 /// Execute hook actions with a shared `MultiProgress`.
@@ -30,13 +28,12 @@ pub(super) fn execute_hooks(
 /// in the same `MultiProgress`, ensuring correct bar ordering.
 pub fn execute_hooks_with_mp(
     actions: &HookActions,
-    worktree_path: &Path,
-    source_path: &Path,
+    context: &HookContext,
     color_mode: color::ColorMode,
     indent: &str,
     mp: &MultiProgress,
 ) -> Result<()> {
-    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent, mp);
+    let errors = execute_hooks_impl(actions, context, color_mode, indent, mp);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -51,13 +48,12 @@ pub fn execute_hooks_with_mp(
 #[cfg(test)]
 pub(super) fn execute_hooks_lenient(
     actions: &HookActions,
-    worktree_path: &Path,
-    source_path: &Path,
+    context: &HookContext,
     color_mode: color::ColorMode,
     indent: &str,
 ) {
     let mp = MultiProgress::new();
-    execute_hooks_lenient_with_mp(actions, worktree_path, source_path, color_mode, indent, &mp);
+    execute_hooks_lenient_with_mp(actions, context, color_mode, indent, &mp);
 }
 
 /// Execute hook actions leniently with a shared `MultiProgress`.
@@ -66,14 +62,13 @@ pub(super) fn execute_hooks_lenient(
 /// in the same `MultiProgress`, ensuring correct bar ordering.
 pub fn execute_hooks_lenient_with_mp(
     actions: &HookActions,
-    worktree_path: &Path,
-    source_path: &Path,
+    context: &HookContext,
     color_mode: color::ColorMode,
     indent: &str,
     mp: &MultiProgress,
 ) {
     let is_tty = color_mode.should_colorize();
-    let errors = execute_hooks_impl(actions, worktree_path, source_path, color_mode, indent, mp);
+    let errors = execute_hooks_impl(actions, context, color_mode, indent, mp);
     for err in &errors {
         emit_line(
             mp,
@@ -92,8 +87,7 @@ pub fn execute_hooks_lenient_with_mp(
 /// error messages into a `Vec<String>`.
 pub(super) fn execute_hooks_impl(
     actions: &HookActions,
-    worktree_path: &Path,
-    source_path: &Path,
+    context: &HookContext,
     color_mode: color::ColorMode,
     indent: &str,
     mp: &MultiProgress,
@@ -106,8 +100,7 @@ pub(super) fn execute_hooks_impl(
     for cmd in &actions.run {
         action_index += 1;
         let is_last = action_index == total_actions;
-        if let Err(e) = runner::execute_command(cmd, worktree_path, color_mode, is_last, indent, mp)
-        {
+        if let Err(e) = runner::execute_command(cmd, context, color_mode, is_last, indent, mp) {
             errors.push(e.to_string());
         }
     }
@@ -118,8 +111,8 @@ pub(super) fn execute_hooks_impl(
         let is_last = action_index == total_actions;
         if let Err(e) = files::copy_files(
             pattern,
-            source_path,
-            worktree_path,
+            &context.repo_root,
+            &context.worktree_path,
             color_mode,
             is_last,
             indent,
@@ -135,8 +128,8 @@ pub(super) fn execute_hooks_impl(
         let is_last = action_index == total_actions;
         if let Err(e) = symlink::create_symlinks(
             pattern,
-            source_path,
-            worktree_path,
+            &context.repo_root,
+            &context.worktree_path,
             color_mode,
             is_last,
             indent,
@@ -159,8 +152,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let result = execute_hooks(
             &actions,
-            &temp_dir,
-            &temp_dir,
+            &HookContext::for_test(&temp_dir),
             color::ColorMode::Never,
             "  ",
         );
@@ -182,8 +174,7 @@ mod tests {
 
         let errors = execute_hooks_impl(
             &actions,
-            &tmp,
-            &tmp,
+            &HookContext::for_test(&tmp),
             color::ColorMode::Never,
             "  ",
             &MultiProgress::new(),
@@ -212,8 +203,7 @@ mod tests {
 
         let errors = execute_hooks_impl(
             &actions,
-            &tmp,
-            &tmp,
+            &HookContext::for_test(&tmp),
             color::ColorMode::Never,
             "  ",
             &MultiProgress::new(),
@@ -236,7 +226,12 @@ mod tests {
             link: vec![],
         };
 
-        let result = execute_hooks(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
+        let result = execute_hooks(
+            &actions,
+            &HookContext::for_test(&tmp),
+            color::ColorMode::Never,
+            "  ",
+        );
         assert!(result.is_err());
 
         std::fs::remove_dir_all(&tmp).ok();
@@ -254,7 +249,12 @@ mod tests {
         };
 
         // execute_hooks_lenient returns () — it should not panic
-        execute_hooks_lenient(&actions, &tmp, &tmp, color::ColorMode::Never, "  ");
+        execute_hooks_lenient(
+            &actions,
+            &HookContext::for_test(&tmp),
+            color::ColorMode::Never,
+            "  ",
+        );
 
         std::fs::remove_dir_all(&tmp).ok();
     }
