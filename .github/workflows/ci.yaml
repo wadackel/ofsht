@@ -73,6 +73,6 @@ jobs:
           cache-key-prefix: nix-ci-${{ runner.os }}
 
       - name: Run zizmor
-        run: nix develop --command zizmor .
+        run: nix develop --command uvx zizmor@1.32.0 .
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
