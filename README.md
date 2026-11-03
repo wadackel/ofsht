@@ -536,6 +536,16 @@ The GitHub integration automatically:
 - Generates appropriate branch names
 - Creates the worktree with the correct base branch
 
+For a pull request, an existing local branch is fast-forwarded to the fetched head when
+it is not checked out and has no local-only commits. Otherwise, ofsht preserves the
+branch and warns when it differs. A checked-out branch is left untouched and the error
+shows how to navigate to its worktree.
+
+Fork PR branches use the PR's head name, or `pr-<number>-<head>` when that name belongs
+to an unrelated local branch. ofsht records the PR association in local branch config,
+so repeating `add` points to the existing worktree rather than creating a duplicate.
+Branches created before this association was recorded are treated as unrelated.
+
 To disable GitHub integration, set `enabled = false` in global config:
 
 ```toml

@@ -10,7 +10,7 @@ use crate::commands::context::CommandContext;
 use crate::config;
 use crate::hooks;
 use crate::integrations;
-use crate::integrations::git::{GitClient, RealGitClient};
+use crate::integrations::git::RealGitClient;
 use crate::integrations::tmux::TmuxLauncher;
 use crate::integrations::zoxide::{is_zoxide_available, RealZoxideClient};
 use crate::path_utils::normalize_absolute_path;
@@ -26,93 +26,10 @@ pub struct AddOptions {
     pub detach: bool,
 }
 
-/// Process a PR and return branch name and start point
-fn process_pr(
-    git: &impl GitClient,
-    pr: &integrations::gh::PrInfo,
-    number: u32,
-    repo_root: &std::path::Path,
-    color_mode: color::ColorMode,
-) -> Result<(String, Option<String>)> {
-    // Check if it's from a fork (cross-repository PR)
-    let is_fork = pr.is_cross_repository;
-
-    if is_fork {
-        // Fork PR - fetch PR ref from GitHub without checking out
-        git.fetch(
-            &["fetch", "origin", &format!("refs/pull/{number}/head")],
-            Some(repo_root),
-        )
-        .map_err(|e| anyhow::anyhow!("git fetch PR ref failed: {e}"))?;
-        // FETCH_HEAD belongs to the main worktree, and `git worktree add` runs in the current one
-        let fetched = git
-            .rev_parse(&["rev-parse", "--verify", "FETCH_HEAD"], Some(repo_root))?
-            .trim()
-            .to_string();
-
-        // Check if local branch with PR's name already exists
-        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root))?;
-
-        eprintln!(
-            "{}",
-            color::success(
-                color_mode,
-                &format!("Fetched PR #{}: {} (fork)", pr.number, pr.title)
-            )
-        );
-
-        if branch_exists {
-            // Conflict: local branch already exists, use unique name
-            let sanitized_ref = pr.head_ref_name.replace('/', "-");
-            let unique_branch = format!("pr-{number}-{sanitized_ref}");
-
-            eprintln!(
-                "{}",
-                color::warn(
-                    color_mode,
-                    &format!(
-                        "Local branch '{}' already exists. Using '{}' instead.",
-                        pr.head_ref_name, unique_branch
-                    )
-                )
-            );
-
-            Ok((unique_branch, Some(fetched)))
-        } else {
-            // Use PR's original branch name
-            Ok((pr.head_ref_name.clone(), Some(fetched)))
-        }
-    } else {
-        // Same repository - fetch the branch
-        git.fetch(&["fetch", "origin", &pr.head_ref_name], Some(repo_root))
-            .map_err(|e| anyhow::anyhow!("git fetch failed: {e}"))?;
-
-        eprintln!(
-            "{}",
-            color::success(
-                color_mode,
-                &format!("Fetched PR #{}: {}", pr.number, pr.title)
-            )
-        );
-
-        // Check if local branch already exists
-        let branch_exists = git.branch_exists(&pr.head_ref_name, Some(repo_root))?;
-
-        if branch_exists {
-            // Existing local branch - use it directly
-            Ok((pr.head_ref_name.clone(), None))
-        } else {
-            // Create new branch tracking remote
-            Ok((
-                pr.head_ref_name.clone(),
-                Some(format!("origin/{}", pr.head_ref_name)),
-            ))
-        }
-    }
-}
+mod pr;
+use pr::{process_pr, ResolvedBranch};
 
 /// Resolve branch name and start point from GitHub issue/PR
-#[allow(clippy::type_complexity)]
 fn resolve_github_ref(
     git: &RealGitClient,
     gh_client: &impl integrations::gh::GhClient,
@@ -120,7 +37,7 @@ fn resolve_github_ref(
     start_point: Option<&str>,
     repo_root: &std::path::Path,
     color_mode: color::ColorMode,
-) -> Result<(String, Option<String>)> {
+) -> Result<ResolvedBranch> {
     if !gh_client.is_available() {
         anyhow::bail!(
             "GitHub CLI (gh) is not installed or not available.\n\
@@ -142,7 +59,11 @@ fn resolve_github_ref(
                         &format!("Fetched issue #{}: {}", issue.number, issue.title)
                     )
                 );
-                Ok((branch_name, start_point.map(String::from)))
+                Ok(ResolvedBranch {
+                    branch: branch_name,
+                    start_point: start_point.map(String::from),
+                    fork_pr: None,
+                })
             }
             Err(_issue_err) => {
                 anyhow::bail!(
@@ -208,7 +129,7 @@ pub fn cmd_new(
     }
 
     // Resolve actual branch name and optional start point from GitHub if needed
-    let (actual_branch, actual_start_point) = match branch_input {
+    let resolved = match branch_input {
         integrations::gh::BranchInput::Github(number) if ctx.config.integrations.gh.enabled => {
             let gh_client = integrations::gh::RealGhClient;
             resolve_github_ref(
@@ -232,13 +153,21 @@ pub fn cmd_new(
                     )
                 )
             );
-            (branch.to_string(), start_point.map(String::from))
+            ResolvedBranch {
+                branch: branch.to_string(),
+                start_point: start_point.map(String::from),
+                fork_pr: None,
+            }
         }
-        integrations::gh::BranchInput::Plain(name) => (name, start_point.map(String::from)),
+        integrations::gh::BranchInput::Plain(name) => ResolvedBranch {
+            branch: name,
+            start_point: start_point.map(String::from),
+            fork_pr: None,
+        },
     };
 
-    let branch = &actual_branch;
-    let start_point = actual_start_point.as_deref();
+    let branch = &resolved.branch;
+    let start_point = resolved.start_point.as_deref();
 
     // Determine if tmux should be used based on flags and config
     let use_tmux = should_use_tmux(ctx.config.integrations.tmux.behavior, tmux, no_tmux);
@@ -284,6 +213,7 @@ pub fn cmd_new(
     };
 
     let result = service.create(&req, |path| {
+        resolved.record_provenance(&ctx.git, &ctx.repo_root, path)?;
         // non-TTY: print header before hooks (rm/sync pattern)
         if !is_tty {
             eprintln!("{}", color::success(color_mode, format!("Added {branch}")));
@@ -362,7 +292,7 @@ mod tests {
             is_cross_repository: true,
         };
 
-        let (branch, start) = process_pr(
+        let resolved = process_pr(
             &git,
             &pr,
             7,
@@ -371,9 +301,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(branch, "fix-typo");
+        assert_eq!(resolved.branch, "fix-typo");
         assert_eq!(
-            start.as_deref(),
+            resolved.start_point.as_deref(),
             Some("0123456789abcdef0123456789abcdef01234567")
         );
     }
@@ -436,9 +366,9 @@ mod tests {
             color::ColorMode::Never,
         );
 
-        let (branch, start_point) = result.unwrap();
-        assert_eq!(branch, "issue-33");
-        assert!(start_point.is_none());
+        let resolved = result.unwrap();
+        assert_eq!(resolved.branch, "issue-33");
+        assert!(resolved.start_point.is_none());
     }
 
     #[test]
@@ -459,9 +389,9 @@ mod tests {
             color::ColorMode::Never,
         );
 
-        let (branch, start_point) = result.unwrap();
-        assert_eq!(branch, "issue-33");
-        assert_eq!(start_point.as_deref(), Some("develop"));
+        let resolved = result.unwrap();
+        assert_eq!(resolved.branch, "issue-33");
+        assert_eq!(resolved.start_point.as_deref(), Some("develop"));
     }
 
     #[test]
