@@ -31,12 +31,12 @@ pub trait GitClient {
     /// Run `git worktree remove <path>`.
     fn remove_worktree(&self, path: &Path, dir: Option<&Path>) -> Result<()>;
 
-    /// Run `git branch -D <branch>`.
+    /// Run `git branch -d <branch>`, or `git branch -D <branch>` when `force`.
     ///
     /// Returns `Ok(true)` on success, `Ok(false)` when git exits non-zero
-    /// (lenient case used by callers that treat deletion failure as a warning),
+    /// (e.g. an unmerged branch without `force`; callers treat it as a warning),
     /// and `Err` only when the git process cannot be spawned.
-    fn remove_branch(&self, branch: &str, dir: Option<&Path>) -> Result<bool>;
+    fn remove_branch(&self, branch: &str, force: bool, dir: Option<&Path>) -> Result<bool>;
 
     /// Run `git rev-parse --verify <ref>` and return whether it succeeded.
     ///
@@ -126,12 +126,13 @@ impl GitClient for RealGitClient {
         Ok(())
     }
 
-    fn remove_branch(&self, branch: &str, dir: Option<&Path>) -> Result<bool> {
+    fn remove_branch(&self, branch: &str, force: bool, dir: Option<&Path>) -> Result<bool> {
+        let flag = if force { "-D" } else { "-d" };
         let mut cmd = build_command(dir);
         let output = cmd
-            .args(["branch", "-D", branch])
+            .args(["branch", flag, branch])
             .output()
-            .context("Failed to execute git branch -D")?;
+            .with_context(|| format!("Failed to execute git branch {flag}"))?;
 
         Ok(output.status.success())
     }
@@ -242,7 +243,7 @@ pub mod tests {
             Ok(())
         }
 
-        fn remove_branch(&self, _branch: &str, _dir: Option<&Path>) -> Result<bool> {
+        fn remove_branch(&self, _branch: &str, _force: bool, _dir: Option<&Path>) -> Result<bool> {
             Ok(self.remove_branch_returns)
         }
 
@@ -320,7 +321,7 @@ pub mod tests {
             remove_branch_returns: true,
             ..Default::default()
         };
-        let result = client.remove_branch("feature", None);
+        let result = client.remove_branch("feature", false, None);
         assert!(result.unwrap());
     }
 

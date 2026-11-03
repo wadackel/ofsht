@@ -62,6 +62,12 @@ pub enum Commands {
         /// Worktree name(s) to remove (optional with fzf)
         #[arg(num_args = 0.., value_name = "TARGET", add = ArgValueCompleter::new(list_git_worktrees))]
         targets: Vec<String>,
+        /// Keep the branch instead of deleting it
+        #[arg(long, conflicts_with = "force_branch")]
+        keep_branch: bool,
+        /// Delete the branch even if it is not fully merged (`git branch -D`)
+        #[arg(long, conflicts_with = "keep_branch")]
+        force_branch: bool,
     },
     /// Navigate to a worktree (prints path)
     /// When name is not provided, fzf will be used for interactive selection (if enabled)

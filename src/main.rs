@@ -49,7 +49,20 @@ fn main() -> Result<()> {
             start_point,
         } => commands::create::cmd_create(branch.as_deref(), start_point.as_deref(), color_mode),
         Commands::Ls { show_path } => commands::list::cmd_list(show_path, color_mode),
-        Commands::Rm { targets } => commands::rm::cmd_rm_many(&targets, color_mode),
+        Commands::Rm {
+            targets,
+            keep_branch,
+            force_branch,
+        } => {
+            let branch_deletion = if keep_branch {
+                commands::rm::BranchDeletion::Keep
+            } else if force_branch {
+                commands::rm::BranchDeletion::Force
+            } else {
+                commands::rm::BranchDeletion::Safe
+            };
+            commands::rm::cmd_rm_many(&targets, branch_deletion, color_mode)
+        }
         Commands::Cd { name } => commands::cd::cmd_goto(name.as_deref(), color_mode),
         Commands::Init {
             global,

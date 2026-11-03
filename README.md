@@ -44,7 +44,7 @@ A command-line tool for managing Git worktrees with automation features.
 - Create worktrees from branches, tags, or commits
 - List all worktrees with status information
 - Navigate to worktrees by branch name
-- Remove worktrees with automatic branch cleanup
+- Remove worktrees with automatic cleanup of merged branches (unmerged branches are kept)
 - Interactive worktree selection with fzf integration
 - Read branch / target names from stdin when piped (auto-detected for `add`, `create`, `cd`, `rm`)
 
@@ -240,7 +240,16 @@ ofsht rm
 # Remove prunable worktrees (those whose directories have been manually deleted)
 # Works with branch names, absolute paths, or relative paths
 ofsht rm feature-deleted
+
+# Keep the branch and remove only the worktree
+ofsht rm --keep-branch feature-awesome
+
+# Delete the branch even if it has unmerged commits
+ofsht rm --force-branch feature-awesome
 ```
+
+> [!NOTE]
+> By default, `ofsht rm` deletes the worktree's branch with `git branch -d`, so a branch with unmerged commits is kept and a warning is printed. Git checks whether the branch is merged into its upstream when one is set, and into the HEAD of the main worktree otherwise. Branches merged through a GitHub squash or rebase merge look unmerged to Git; delete them with `--force-branch`.
 
 > [!NOTE]
 > `ofsht rm` can remove worktrees even if their directories have been manually deleted. Git marks such worktrees as "prunable" (still registered in Git but directory missing), and `ofsht` handles them gracefully by cleaning up the Git registration.
@@ -624,7 +633,7 @@ ofsht add #456                    # Create worktree from issue #456
 # Implement the feature
 git push                          # Push changes
 ofsht cd main                     # Return to main branch
-ofsht rm 456                      # Clean up the worktree
+ofsht rm 456                      # Clean up the worktree (the branch is kept if Git sees it as unmerged)
 ```
 
 ### Maintenance Cycle: Create → Test → Cleanup
@@ -645,7 +654,7 @@ git push
 
 # Return to main and clean up
 ofsht cd main
-ofsht rm feature-new-api          # Hooks run cleanup commands
+ofsht rm feature-new-api          # Hooks run cleanup commands; add --force-branch after a squash merge
 
 # Or clean up from within the worktree
 ofsht rm .                        # Automatically returns to main repo
@@ -655,6 +664,7 @@ ofsht rm .                        # Automatically returns to main repo
 
 ```bash
 # Bulk-remove every merged feature branch's worktree
+# (run with main checked out in the main worktree, so `git branch -d` sees them as merged)
 git branch --merged main | grep -v '^\*\|main$' | ofsht rm
 
 # Spin up a worktree for each open PR you own
