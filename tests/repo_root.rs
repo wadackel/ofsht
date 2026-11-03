@@ -233,3 +233,161 @@ fn test_cd_command() {
 
     temp.close().unwrap();
 }
+
+/// Run git in `dir`, failing the test on error
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// ofsht in `dir` with HOME and the global config isolated under `home`
+fn ofsht_isolated(dir: &std::path::Path, home: &std::path::Path) -> Command {
+    let mut cmd = Command::cargo_bin("ofsht").unwrap();
+    cmd.current_dir(dir)
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("_ZO_DATA_DIR", home.join("zoxide"));
+    cmd
+}
+
+fn init_with_commit(dir: &std::path::Path, extra: &[&str]) {
+    let mut args = vec!["init", "-q", "-b", "main"];
+    args.extend_from_slice(extra);
+    git(
+        dir.parent().unwrap(),
+        &[&args[..], &[dir.to_str().unwrap()]].concat(),
+    );
+    git(dir, &["config", "user.name", "Test User"]);
+    git(dir, &["config", "user.email", "test@example.com"]);
+    git(
+        dir,
+        &["commit", "-q", "--allow-empty", "-m", "Initial commit"],
+    );
+}
+
+#[test]
+#[allow(clippy::literal_string_with_formatting_args)]
+fn separate_git_dir_main_worktree_is_root() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let git_dir = temp.path().join("gitdir");
+    let work_tree = temp.path().join("app");
+    init_with_commit(
+        &work_tree,
+        &["--separate-git-dir", git_dir.to_str().unwrap()],
+    );
+    std::fs::write(
+        work_tree.join(".ofsht.toml"),
+        "[worktree]\ndir = \"../{repo}-wt/{branch}\"\n",
+    )
+    .unwrap();
+
+    ofsht_isolated(&work_tree, &home)
+        .args(["create", "slot-1"])
+        .assert()
+        .success();
+
+    assert!(temp.path().join("app-wt/slot-1").exists());
+    assert!(!temp.path().join("gitdir-wt").exists());
+}
+
+#[test]
+fn separate_git_dir_linked_worktree_reports_unknown_main() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let git_dir = temp.path().join("gitdir");
+    let work_tree = temp.path().join("app");
+    init_with_commit(
+        &work_tree,
+        &["--separate-git-dir", git_dir.to_str().unwrap()],
+    );
+    let linked = temp.path().join("linked");
+    git(
+        &work_tree,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+
+    ofsht_isolated(&linked, &home)
+        .arg("ls")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot locate the main worktree"));
+}
+
+#[test]
+fn bare_repository_is_rejected() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let seed = temp.path().join("seed");
+    init_with_commit(&seed, &[]);
+    let bare = temp.path().join("app.git");
+    git(
+        temp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            seed.to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let linked = temp.path().join("main-worktree");
+    git(
+        &bare,
+        &["worktree", "add", "-q", linked.to_str().unwrap(), "main"],
+    );
+
+    for dir in [&bare, &linked] {
+        ofsht_isolated(dir, &home)
+            .arg("ls")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "Bare repositories are not supported",
+            ));
+    }
+}
+
+#[test]
+fn init_local_in_bare_repository_fails() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let seed = temp.path().join("seed");
+    init_with_commit(&seed, &[]);
+    let bare = temp.path().join("app.git");
+    git(
+        temp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            seed.to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+
+    ofsht_isolated(&bare, &home)
+        .args(["init", "--local"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Bare repositories are not supported",
+        ));
+    assert!(!bare.join(".ofsht.toml").exists());
+    assert!(!temp.path().join(".ofsht.toml").exists());
+}

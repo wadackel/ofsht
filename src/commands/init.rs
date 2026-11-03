@@ -6,6 +6,7 @@ use crate::color;
 use crate::commands::common::get_main_repo_root;
 use crate::config;
 use crate::config::template_generator::TemplateContext;
+use crate::integrations::git::{GitClient, RealGitClient};
 use crate::path_utils::display_path;
 
 /// Write config file if it doesn't exist (or force overwrite)
@@ -82,11 +83,19 @@ pub fn cmd_init(
 
     // Generate local config
     if generate_local {
-        // Get repo root if we're in a git repository
-        let config_path = get_main_repo_root().map_or_else(
-            |_| config::Config::local_config_path(),
-            |repo_root| config::Config::local_config_path_from(&repo_root),
-        );
+        // Outside a repository the config goes to the current directory; inside one whose main
+        // worktree cannot be found, writing there would hide that the layout is unsupported
+        let config_path = match get_main_repo_root() {
+            Ok(repo_root) => config::Config::local_config_path_from(&repo_root),
+            Err(e)
+                if RealGitClient
+                    .rev_parse(&["rev-parse", "--git-dir"], None)
+                    .is_ok() =>
+            {
+                return Err(e);
+            }
+            Err(_) => config::Config::local_config_path(),
+        };
 
         write_config_if_needed(
             &config_path,

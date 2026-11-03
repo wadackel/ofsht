@@ -9,41 +9,61 @@ use crate::domain::worktree::{NameResolution, WorktreeEntry, WorktreeList};
 use crate::integrations::git::{GitClient, RealGitClient};
 use crate::path_utils::{canonicalize_allow_missing, display_path};
 
-/// Get the main repository root path
+/// Get the main worktree's root path
+///
+/// From the main worktree itself this is its toplevel, whatever the `.git` layout. From a
+/// linked worktree it is the parent of the common `.git` directory, which only the standard
+/// layout can tell.
 ///
 /// # Errors
 /// Returns an error if:
 /// - Not in a git repository
-/// - Git command fails
-/// - Path canonicalization fails
+/// - The repository is bare
+/// - The main worktree cannot be located (a linked worktree of a `--separate-git-dir` repository)
 pub fn get_main_repo_root() -> Result<PathBuf> {
     let git = RealGitClient;
-    let stdout = git
+    let common = git
         .rev_parse(&["rev-parse", "--git-common-dir"], None)
         .map_err(|e| {
             anyhow::anyhow!(
                 "Not in a git repository. Please run ofsht from within a git repository.\nGit error: {e}"
             )
         })?;
+    let cwd = std::env::current_dir()?;
+    let absolute = |path: &str| canonicalize_allow_missing(&cwd.join(path.trim()));
+    let common_dir = absolute(&common);
 
-    let git_dir = stdout.trim().to_string();
-    let git_path = PathBuf::from(&git_dir);
+    let porcelain = git.list_worktrees(None)?;
+    let first_block = porcelain.split("\n\n").next().unwrap_or_default();
+    if first_block.lines().any(|line| line == "bare") {
+        let path = first_block
+            .lines()
+            .find_map(|line| line.strip_prefix("worktree "))
+            .unwrap_or_default();
+        anyhow::bail!("Bare repositories are not supported: {path}");
+    }
 
-    // Convert relative path to absolute
-    let abs_git_path = if git_path.is_absolute() {
-        git_path
-    } else {
-        std::env::current_dir()?.join(git_path).canonicalize()?
-    };
+    let in_main_worktree = git
+        .rev_parse(&["rev-parse", "--git-dir"], None)
+        .is_ok_and(|git_dir| absolute(&git_dir) == common_dir);
+    if in_main_worktree {
+        // Inside the `.git` directory itself there is no toplevel; the parent rule below applies
+        if let Ok(toplevel) = git.rev_parse(&["rev-parse", "--show-toplevel"], None) {
+            return Ok(canonicalize_allow_missing(Path::new(toplevel.trim())));
+        }
+    }
 
-    // Parent of .git directory is the repository root
-    // For bare repositories, git_dir itself might be the root
-    let repo_root = abs_git_path
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or(abs_git_path);
+    if common_dir.file_name().is_some_and(|name| name == ".git") {
+        if let Some(parent) = common_dir.parent() {
+            if canonicalize_allow_missing(&parent.join(".git")) == common_dir {
+                return Ok(parent.to_path_buf());
+            }
+        }
+    }
 
-    Ok(repo_root)
+    anyhow::bail!(
+        "Cannot locate the main worktree of this repository; run ofsht from the main worktree"
+    )
 }
 
 /// Error for a name that matches several worktrees by branch or directory name

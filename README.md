@@ -353,6 +353,9 @@ ofsht create feature-awesome
 > [!CAUTION]
 > The shell wrapper only works in interactive shells. You must add the `eval "$(ofsht shell-init <shell>)"` line to your shell's rc file (`~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish`) and reload it. The wrapper will not work in non-interactive scripts.
 
+> [!NOTE]
+> Bare repositories are not supported. In a repository created with `git init --separate-git-dir`, run `ofsht` from the main worktree: from a linked worktree, git has no record of where the main worktree is, so `ofsht` stops with `Cannot locate the main worktree`. If that separate git directory is itself named `.git`, a linked worktree cannot tell it apart from the standard layout.
+
 ### Configuration
 
 `ofsht` uses a two-tier configuration system with clear inheritance rules:
