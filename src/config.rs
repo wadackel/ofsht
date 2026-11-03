@@ -286,9 +286,9 @@ mod tests {
             run = ["echo bye"]
         "#;
         let parsed: ProjectConfig = toml::from_str(toml).expect("project-only TOML must parse");
-        assert_eq!(parsed.worktree.dir, "/tmp/{branch}");
-        assert_eq!(parsed.hooks.create.run, vec!["echo hi"]);
-        assert_eq!(parsed.hooks.delete.run, vec!["echo bye"]);
+        assert_eq!(parsed.worktree.dir.as_deref(), Some("/tmp/{branch}"));
+        assert_eq!(parsed.hooks.create.run, Some(vec!["echo hi".to_string()]));
+        assert_eq!(parsed.hooks.delete.run, Some(vec!["echo bye".to_string()]));
     }
 
     #[test]

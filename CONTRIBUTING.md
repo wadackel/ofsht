@@ -182,8 +182,10 @@ src/
   - Uses `$XDG_CONFIG_HOME/ofsht/config.toml` if set (must be absolute path)
   - Fallbacks to `~/.config/ofsht/config.toml` otherwise
   - **Integration settings (`zoxide`, `fzf`, `tmux`, `gh`) are ONLY available in global config**
-- Default config: Hard-coded defaults if no files exist
-- The `Config::load_impl()` function handles this cascading logic
+- Default config: Hard-coded defaults for fields omitted from both files
+- The loader starts with global/default settings and overrides only supplied local `worktree.dir` and create/delete `run`, `copy`, and `link` fields
+- Local lists replace global lists; `[]` disables that action, while an omitted field or empty section inherits it
+- Integration settings remain global-only; a leading `~` component in `worktree.dir` expands to home for creation, name resolution, and creation-branch cleanup
 
 **Hook Execution Flow** (`hooks.rs`)
 1. Commands run first (`actions.run`)

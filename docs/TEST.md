@@ -354,6 +354,18 @@ instructions, and mutation commands after their filesystem work succeeds.
 
 ## Hook Functionality Verification
 
+Verify inheritance with a global `worktree.dir` and global run/copy/link actions.
+A local file containing only a create run action must retain the global directory
+and unspecified copy/link actions. Set one local action to `[]` and verify that
+only that action is disabled; empty local sections inherit all their fields.
+Repeat for delete actions.
+
+With `dir = "~/pool/{repo}/{branch}"`, create a nested branch such as `topic/slot`,
+switch that worktree to another branch, then resolve and remove it by `topic/slot`.
+The path must be under home, no literal `~` folder may appear in the repository,
+and normal safe cleanup should remove both merged non-default branches. Automated
+coverage uses an isolated child-process home in `cargo test --test config_inheritance`.
+
 ### 1. Create Configuration File
 
 ```bash

@@ -27,9 +27,29 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     #[serde(default)]
-    pub hooks: Hooks,
+    pub hooks: ProjectHooks,
     #[serde(default)]
-    pub worktree: WorktreeConfig,
+    pub worktree: ProjectWorktreeConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ProjectWorktreeConfig {
+    pub dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ProjectHooks {
+    #[serde(default)]
+    pub create: ProjectHookActions,
+    #[serde(default)]
+    pub delete: ProjectHookActions,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ProjectHookActions {
+    pub run: Option<Vec<String>>,
+    pub copy: Option<Vec<String>>,
+    pub link: Option<Vec<String>>,
 }
 
 /// Parse-only DTO for `~/.config/ofsht/config.toml` (user-level global
