@@ -547,7 +547,7 @@ pub fn cmd_rm_many(
             .len();
         if dry_run {
             anyhow::bail!(
-                "{}\nNothing would be removed: {count} worktree(s) refused",
+                "Would refuse:\n{}\nNothing would be removed: {count} worktree(s) refused",
                 lines.join("\n")
             );
         }
