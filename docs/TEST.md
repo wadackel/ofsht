@@ -192,6 +192,7 @@ ofsht cd /private/tmp/demo-ofsht-outside/review
 
 # Prints the main worktree path
 ofsht cd main
+ofsht cd "$(git rev-parse --show-toplevel)"
 
 # Expected: Error: Cannot remove main worktree
 ofsht rm main
@@ -201,6 +202,14 @@ git worktree add -b fix/other /private/tmp/demo-ofsht-outside2/review
 
 # Expected: Error: Ambiguous worktree name: review, followed by both paths
 ofsht cd review
+
+# A branch named after another worktree's directory
+git -C /private/tmp/demo-ofsht-outside2/review switch -c wt1
+
+# Expected: Error: Ambiguous worktree name: wt1, followed by both paths with their branches
+ofsht rm wt1
+git -C /private/tmp/demo-ofsht-outside2/review switch fix/other
+git branch -D wt1
 
 # Clean up
 ofsht rm wt1 fix/typo fix/other

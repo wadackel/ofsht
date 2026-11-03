@@ -1,14 +1,14 @@
 //! Cd command - Navigate to a worktree by branch name
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::commands::common::ambiguous_name_error;
 use crate::commands::context::CommandContext;
 use crate::domain::worktree::{NameResolution, WorktreeList};
 use crate::integrations;
 use crate::integrations::fzf::FzfPicker;
-use crate::path_utils::normalize_absolute_path;
+use crate::path_utils::{canonicalize_allow_missing, normalize_absolute_path};
 
 /// Navigate to a worktree by branch name
 ///
@@ -16,7 +16,7 @@ use crate::path_utils::normalize_absolute_path;
 /// Returns an error if:
 /// - Git worktree list command fails
 /// - Worktree not found
-/// - The name is shared by several worktrees outside the worktree root
+/// - The name matches several worktrees by branch or directory name
 /// - Fzf is required but not available
 pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Result<()> {
     let ctx = CommandContext::new_lenient(color_mode)?;
@@ -61,16 +61,14 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
 
     let list = WorktreeList::parse(&stdout, None);
 
-    // "@" and the main worktree's branch: `find_by_branch` skips main because `rm` must not
+    // "@" and the main worktree's branch: name resolution skips main because `rm` must not
     // reach it, but `cd` has to.
     let main_entry = list
         .main()
         .context("git worktree list returned no entries")?;
+    let main_path = normalize_absolute_path(&PathBuf::from(&main_entry.path));
     if name == "@" || main_entry.branch.as_deref() == Some(name) {
-        println!(
-            "{}",
-            normalize_absolute_path(&PathBuf::from(&main_entry.path))
-        );
+        println!("{main_path}");
         return Ok(());
     }
 
@@ -80,6 +78,13 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
             Ok(())
         }
         NameResolution::Ambiguous(entries) => Err(ambiguous_name_error(name, &entries)),
+        NameResolution::NotFound
+            if canonicalize_allow_missing(Path::new(name))
+                == canonicalize_allow_missing(Path::new(&main_entry.path)) =>
+        {
+            println!("{main_path}");
+            Ok(())
+        }
         NameResolution::NotFound => anyhow::bail!("Worktree not found: {name}"),
     }
 }

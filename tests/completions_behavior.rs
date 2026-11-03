@@ -284,6 +284,42 @@ fn test_cd_completion_omits_name_shared_by_outside_worktrees() {
 
 #[test]
 #[serial]
+#[allow(clippy::literal_string_with_formatting_args)]
+fn test_cd_completion_omits_branch_name_taken_by_another_directory() {
+    let repo = GitTestRepo::new();
+    // Pin the template so the worktrees below stay outside the root whatever the global config says
+    repo.dir
+        .child(".ofsht.toml")
+        .write_str("[worktree]\ndir = \"../{repo}-worktrees/{branch}\"\n")
+        .unwrap();
+    for (branch, directory) in [("fix-a", "a/review"), ("review", "b/other")] {
+        let worktree = repo.dir.child(directory);
+        GitTestRepo::run_git(
+            &repo.dir,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                worktree.path().to_str().unwrap(),
+            ],
+        );
+    }
+
+    let candidates = get_completions(&["cd", ""], repo.path());
+
+    assert!(
+        !candidates.contains(&"review".to_string()),
+        "Ambiguous branch name in candidates: {candidates:?}"
+    );
+    assert!(
+        candidates.contains(&"fix-a".to_string()),
+        "Expected branch name in candidates: {candidates:?}"
+    );
+}
+
+#[test]
+#[serial]
 fn test_rm_completion_shows_flags_with_dash() {
     let repo = GitTestRepo::new();
 

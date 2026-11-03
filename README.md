@@ -260,7 +260,7 @@ ofsht rm --force-branch feature-awesome
 
 #### Worktree Names
 
-`ofsht cd` and `ofsht rm` try these forms in order:
+`ofsht cd` and `ofsht rm` accept these forms:
 
 | Form | Example |
 |---|---|
@@ -269,18 +269,18 @@ ofsht rm --force-branch feature-awesome
 | Directory name of a worktree outside that directory | `review` |
 | Absolute path, or a path relative to the current directory | `~/tmp/review`, `../myapp-worktrees/wt1` |
 
-`ofsht ls`, fzf, and shell completion show a name you can type for each worktree. When a worktree's short name would reach something else, `ofsht ls` and fzf show its path instead, and shell completion offers only its branch name.
-
-A worktree inside the `worktree.dir` directory wins over a worktree outside it with the same directory name. When only worktrees outside it share a directory name, the name is rejected:
+A name may match a worktree by its branch and another by its directory, for example after `git switch` in a long-lived worktree. A worktree inside the `worktree.dir` directory wins over a worktree outside it with the same directory name. When the name still matches more than one worktree, it is rejected instead of picking one:
 
 ```text
-Error: Ambiguous worktree name: review
-  ~/tmp/a/review
-  ~/tmp/b/review
-Specify a branch name or a path
+Error: Ambiguous worktree name: slot-2
+  ~/dev/myapp-worktrees/slot-1 [slot-2]
+  ~/dev/myapp-worktrees/slot-2 [other]
+Specify a path
 ```
 
-`ofsht cd` goes to the main worktree for `@` and for the main worktree's branch name. `ofsht rm` refuses both.
+`ofsht ls`, fzf, and shell completion show a name you can type for each worktree. When a worktree's short name would reach something else, `ofsht ls` and fzf show its path instead, and shell completion offers only a branch name that reaches it. When neither name reaches it, use its path.
+
+`ofsht cd` goes to the main worktree for `@`, for the main worktree's branch name, and for its path. `ofsht rm` refuses all three.
 
 ### Stdin Input
 
