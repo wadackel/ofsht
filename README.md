@@ -311,6 +311,14 @@ Specify a path
 
 `ofsht ls`, fzf, and shell completion show a name you can type for each worktree. When a worktree's short name would reach something else, `ofsht ls` and fzf show its path instead, and shell completion offers only a branch name that reaches it. When neither name reaches it, use its path.
 
+`cd` rejects missing worktree directories instead of printing a stale path, and
+suggests pruning the stale registration. When `cd` or `rm` cannot resolve a target,
+the error suggests creating a worktree for an existing local branch or lists the
+available worktrees. Ambiguous targets still require a more specific name or path.
+
+Application output exits quietly when a downstream pipe closes early, such as
+`ofsht ls | head -n 1`; other command errors remain failures.
+
 `ofsht cd` goes to the main worktree for `@`, for the main worktree's branch name, and for its path. `ofsht rm` refuses all three.
 
 ### Stdin Input

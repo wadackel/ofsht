@@ -339,6 +339,19 @@ git worktree list
 # Expected: Only shows main worktree and any other active worktrees
 ```
 
+## Navigation and Closed-Pipe Diagnostics
+
+Before testing hooks, verify navigation errors in an isolated repository: remove a
+linked worktree's directory without pruning, then run `ofsht cd <branch>` and
+`ofsht cd <path>`. Both must fail with empty stdout and stale-registration guidance.
+A free local branch should produce an `ofsht add` hint; an unknown name should list
+available worktrees. Main-worktree removal and ambiguous names remain errors.
+
+Pipe `ofsht ls` and `ofsht shell-init bash` into a consumer that exits early. There
+must be no panic. The deterministic closed-reader tests in
+`cargo test --test cli_diagnostics` also cover table output, navigation, completion
+instructions, and mutation commands after their filesystem work succeeds.
+
 ## Hook Functionality Verification
 
 ### 1. Create Configuration File

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use crate::commands::common::ambiguous_name_error;
+use crate::commands::common::{ambiguous_name_error, worktree_not_found_error};
 use crate::commands::context::CommandContext;
 use crate::domain::worktree::{NameResolution, WorktreeList};
 use crate::integrations;
@@ -58,8 +58,7 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
             return Ok(());
         }
 
-        println!("{}", normalize_absolute_path(&PathBuf::from(&selected[0])));
-        return Ok(());
+        return print_worktree_path(Path::new(&selected[0]));
     };
     let name = name.as_str();
 
@@ -72,23 +71,35 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
         .context("git worktree list returned no entries")?;
     let main_path = normalize_absolute_path(&PathBuf::from(&main_entry.path));
     if name == "@" || main_entry.branch.as_deref() == Some(name) {
-        println!("{main_path}");
-        return Ok(());
+        return print_worktree_path(Path::new(&main_path));
     }
 
     match list.resolve_name(name, root.as_deref()) {
-        NameResolution::Found(entry) => {
-            println!("{}", normalize_absolute_path(&PathBuf::from(&entry.path)));
-            Ok(())
-        }
+        NameResolution::Found(entry) => print_worktree_path(Path::new(&entry.path)),
         NameResolution::Ambiguous(entries) => Err(ambiguous_name_error(name, &entries)),
         NameResolution::NotFound
             if canonicalize_allow_missing(Path::new(name))
                 == canonicalize_allow_missing(Path::new(&main_entry.path)) =>
         {
-            println!("{main_path}");
-            Ok(())
+            print_worktree_path(Path::new(&main_path))
         }
-        NameResolution::NotFound => anyhow::bail!("Worktree not found: {name}"),
+        NameResolution::NotFound => {
+            Err(worktree_not_found_error(name, &list, root.as_deref(), true))
+        }
+    }
+}
+
+fn print_worktree_path(path: &Path) -> Result<()> {
+    match path.metadata() {
+        Ok(metadata) if metadata.is_dir() => {
+            crate::output::write_stdout(format_args!("{}\n", normalize_absolute_path(path)))
+        }
+        Ok(_) => anyhow::bail!("Worktree path is not a directory: {}", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
+            "Worktree directory not found: {}. Run: git worktree prune",
+            path.display()
+        ),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to access worktree directory: {}", path.display())),
     }
 }

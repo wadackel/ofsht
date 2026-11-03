@@ -607,7 +607,7 @@ pub fn cmd_rm_many(
             .main()
             .map(|m| m.path.as_str())
             .context("git worktree list returned no entries")?;
-        println!("{main_path}");
+        crate::output::write_stdout(format_args!("{main_path}\n"))?;
     }
 
     Ok(())

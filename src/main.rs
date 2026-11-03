@@ -6,6 +6,7 @@ mod config;
 mod domain;
 mod hooks;
 mod integrations;
+mod output;
 mod path_utils;
 mod service;
 mod shell_completion;
@@ -19,7 +20,24 @@ use clap_complete::env::{CompleteEnv, Shells};
 use cli::{Cli, Commands};
 use shell_completion::{FilteredBash, FilteredFish, FilteredZsh};
 
-fn main() -> Result<()> {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) if is_broken_stdout(&error) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn is_broken_stdout(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<output::StdoutError>()
+        .is_some_and(|error| error.0.kind() == std::io::ErrorKind::BrokenPipe)
+}
+
+fn run() -> Result<()> {
     // Handle dynamic completion via COMPLETE environment variable.
     // Custom shell adapters hide flag candidates unless the current word starts with `-`.
     CompleteEnv::with_factory(Cli::command)
@@ -105,5 +123,25 @@ fn main() -> Result<()> {
             overwrite,
             color_mode,
         ),
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    #[test]
+    fn only_stdout_broken_pipe_is_quiet() {
+        use std::io::{Error, ErrorKind};
+        let stdout = anyhow::Error::new(crate::output::StdoutError(Error::from(
+            ErrorKind::BrokenPipe,
+        )))
+        .context("command output");
+        assert!(super::is_broken_stdout(&stdout));
+        assert!(!super::is_broken_stdout(
+            &Error::from(ErrorKind::BrokenPipe).into()
+        ));
+        let denied = anyhow::Error::new(crate::output::StdoutError(Error::from(
+            ErrorKind::PermissionDenied,
+        )));
+        assert!(!super::is_broken_stdout(&denied));
     }
 }
