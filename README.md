@@ -202,6 +202,9 @@ ofsht add feature-awesome --tmux      # Creates worktree and opens new tmux wind
 > [!NOTE]
 > Without a start point, the new branch starts from the HEAD of the worktree you run the command in, as with plain `git worktree add`, so running it inside a pooled worktree branches off that worktree's current commit. Relative start points such as `HEAD~1` are read in that worktree too.
 
+> [!NOTE]
+> A branch started from a remote branch with another name, such as `ofsht add hotfix-123 origin/main`, gets no upstream, so `git push` does not try to push to `main`; publish it with `git push -u origin hotfix-123`. A branch with the same name as its remote branch, such as `ofsht add feature-x origin/feature-x`, tracks it. If you set `branch.autoSetupMerge` yourself, ofsht leaves tracking to that setting.
+
 #### List Worktrees
 
 ```bash
@@ -274,7 +277,7 @@ ofsht rm --dry-run feature-awesome
 > Before running any delete hook, `ofsht rm` checks every target for what `git worktree remove` would refuse (a locked worktree, modified or untracked files, initialized submodules) and for work the removal would lose for good: commits that only a detached HEAD reaches, and a rebase, merge, cherry-pick, revert, or bisect in progress. If any target would be refused, nothing is removed and every refused target is listed. `--force` lets all of these go except a lock, as `git worktree remove --force` does for files and submodules; it does not imply `--force-branch`. A locked worktree is refused even with `--force`; run `git worktree unlock` first. Because the check runs before the delete hooks, a worktree that a hook would have cleaned up needs `--force`.
 
 > [!NOTE]
-> By default, `ofsht rm` deletes the worktree's branch with `git branch -d`, so a branch with unmerged commits is kept and a warning is printed. Git checks whether the branch is merged into its upstream when one is set, and into the HEAD of the main worktree otherwise. Branches merged through a GitHub squash or rebase merge look unmerged to Git; delete them with `--force-branch`.
+> By default, `ofsht rm` deletes the worktree's branch with `git branch -d`, so a branch with unmerged commits is kept and a warning is printed. Git checks whether the branch is merged into its upstream when one is set, and into the HEAD of the main worktree otherwise; a branch started from a remote branch with another name has no upstream until you push it, so it is compared with the main worktree's HEAD. Branches merged through a GitHub squash or rebase merge look unmerged to Git; delete them with `--force-branch`.
 >
 > The default branch is never deleted, even with `--force-branch`: the branch `origin/HEAD` points to, `init.defaultBranch`, `main`, and `master`. Delete it with `git branch -D` if you mean to.
 >

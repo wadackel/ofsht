@@ -109,6 +109,17 @@ fn run_capturing(mut cmd: Command, op: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// Whether the user left `branch.autoSetupMerge` unset (`git config --get` exits 1)
+///
+/// Only then does `create_worktree` pass `--no-track` for a remote start point with another
+/// name, matching `branch.autoSetupMerge=simple`. Setting `simple` with `-c` would be shorter,
+/// but git before 2.37 rejects the value and fails the whole `worktree add`.
+fn auto_setup_merge_unset(dir: Option<&Path>) -> bool {
+    let mut cmd = build_command(dir);
+    cmd.args(["config", "--get", "branch.autoSetupMerge"]);
+    cmd.output().is_ok_and(|out| out.status.code() == Some(1))
+}
+
 impl GitClient for RealGitClient {
     fn create_worktree(
         &self,
@@ -121,6 +132,14 @@ impl GitClient for RealGitClient {
         cmd.arg("worktree").arg("add");
 
         if let Some(start) = start_point {
+            if auto_setup_merge_unset(dir)
+                && matches!(
+                    self.remote_tracking(start, dir),
+                    Some(RemoteTracking::Branch(name)) if name != branch
+                )
+            {
+                cmd.arg("--no-track");
+            }
             cmd.arg("-b").arg(branch).arg(path).arg(start);
         } else if self.branch_exists(branch, dir)? {
             cmd.arg(path).arg(branch);

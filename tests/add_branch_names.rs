@@ -474,3 +474,43 @@ fn create_in_unborn_repository_succeeds() {
 
     assert_success(&fixture.ofsht_in(&unborn, &["create", "x"]));
 }
+
+fn upstream(fixture: &Fixture, branch: &str) -> Option<String> {
+    let output = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args([
+            "rev-parse",
+            "--abbrev-ref",
+            &format!("{branch}@{{upstream}}"),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[test]
+fn add_from_remote_start_point_with_another_name_sets_no_upstream() {
+    let fixture = Fixture::new();
+
+    assert_success(&fixture.ofsht(&["create", "feature", "origin/main"]));
+
+    assert_eq!(upstream(&fixture, "feature"), None);
+}
+
+#[test]
+fn explicit_auto_setup_merge_is_respected() {
+    let fixture = Fixture::new();
+    git(
+        &fixture.repo,
+        &["config", "branch.autoSetupMerge", "always"],
+    );
+
+    assert_success(&fixture.ofsht(&["create", "bar", "origin/main"]));
+
+    assert_eq!(upstream(&fixture, "bar").as_deref(), Some("origin/main"));
+}
