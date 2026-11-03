@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::color;
-use crate::commands::common::resolve_worktree_target;
+use crate::commands::common::{current_worktree_toplevel, resolve_worktree_target};
 use crate::commands::context::CommandContext;
 use crate::domain::worktree::WorktreeList;
 use crate::hooks;
@@ -151,6 +151,7 @@ pub fn cmd_rm_many(
     // Get worktree list once for all targets
     let list_stdout = ctx.worktree_list_stdout()?;
     let root = ctx.worktree_root();
+    let current = current_worktree_toplevel();
 
     // Resolve targets: CLI args > stdin (when piped) > fzf
     let targets: Vec<String> = if targets.is_empty() {
@@ -202,9 +203,9 @@ pub fn cmd_rm_many(
     let mut seen_paths = HashSet::new();
 
     for target in &targets {
-        match resolve_worktree_target(target, &list_stdout, root.as_deref()) {
+        match resolve_worktree_target(target, &list_stdout, root.as_deref(), current.as_deref()) {
             Ok((canonical_path, worktree_path, branch_name, is_current)) => {
-                // Special handling for current worktree (.)
+                // The current worktree, named as `.` or otherwise, is removed last
                 if is_current {
                     // If we've already seen this path as a non-current target,
                     // remove it from non_current_removals and treat it as current

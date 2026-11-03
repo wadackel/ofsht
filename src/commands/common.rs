@@ -65,9 +65,22 @@ pub fn ambiguous_name_error(name: &str, entries: &[&WorktreeEntry]) -> anyhow::E
     )
 }
 
+/// The worktree containing the current directory, normalized like `canonicalize_allow_missing`
+///
+/// `None` when git cannot tell, for example in a bare repository or a deleted directory.
+#[must_use]
+pub fn current_worktree_toplevel() -> Option<PathBuf> {
+    let stdout = RealGitClient
+        .rev_parse(&["rev-parse", "--show-toplevel"], None)
+        .ok()?;
+    Some(canonicalize_allow_missing(Path::new(stdout.trim())))
+}
+
 /// Resolve a worktree target to its canonical path and metadata
 ///
-/// `root` is the directory that `worktree.dir` places worktrees under.
+/// `root` is the directory that `worktree.dir` places worktrees under, and `current` the
+/// result of `current_worktree_toplevel`. A target is the current worktree when it is `.` or
+/// resolves to `current`.
 ///
 /// Returns: (`canonical_path`, `worktree_path`, `branch_name`, `is_current_worktree`)
 ///
@@ -78,23 +91,18 @@ pub fn resolve_worktree_target(
     name: &str,
     list_stdout: &str,
     root: Option<&Path>,
+    current: Option<&Path>,
 ) -> Result<(PathBuf, PathBuf, Option<String>, bool)> {
-    let is_current_worktree_removal = name == ".";
-
-    // Get current path if resolving "."
-    let current_path_opt = if is_current_worktree_removal {
-        let git = RealGitClient;
-        let stdout = git
-            .rev_parse(&["rev-parse", "--show-toplevel"], None)
-            .map_err(|e| anyhow::anyhow!("Not in a git repository: {e}"))?;
-        Some(PathBuf::from(stdout.trim()))
+    let is_dot = name == ".";
+    let current_path_opt = if is_dot {
+        Some(current.context("Not in a git repository: cannot find the current worktree")?)
     } else {
         None
     };
 
     // Parse worktrees, passing the current path so list.current() resolves
     // the active entry for "." removal.
-    let list = WorktreeList::parse(list_stdout, current_path_opt.as_deref());
+    let list = WorktreeList::parse(list_stdout, current_path_opt);
     let main_entry = list
         .main()
         .context("git worktree list returned no entries")?;
@@ -123,7 +131,7 @@ pub fn resolve_worktree_target(
             anyhow::bail!("Cannot remove main worktree");
         }
 
-        worktree_path = current_path;
+        worktree_path = current_path.to_path_buf();
         branch_name = active.branch.clone();
         canonical_path = canonicalize_allow_missing(&worktree_path);
     } else {
@@ -144,10 +152,6 @@ pub fn resolve_worktree_target(
         }
     }
 
-    Ok((
-        canonical_path,
-        worktree_path,
-        branch_name,
-        is_current_worktree_removal,
-    ))
+    let is_current = is_dot || current == Some(canonical_path.as_path());
+    Ok((canonical_path, worktree_path, branch_name, is_current))
 }
