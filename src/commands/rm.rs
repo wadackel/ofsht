@@ -27,27 +27,27 @@ pub enum BranchDeletion {
 }
 
 /// How `rm` treats worktrees and their branches, resolved once for every target
-struct BranchPolicy {
+struct RemovalPolicy {
     deletion: BranchDeletion,
     /// `git worktree remove --force`: discard modified and untracked files and submodules
-    force: bool,
+    force_worktree: bool,
     /// Never deleted, even with `--force-branch`: losing unpushed work on them costs the most
     default_branches: Vec<String>,
 }
 
-impl BranchPolicy {
+impl RemovalPolicy {
     fn is_default(&self, branch: &str) -> bool {
         self.default_branches.iter().any(|name| name == branch)
     }
 }
 
-/// Remove a worktree, then handle its branch according to `branch_policy`
+/// Remove a worktree, then handle its branch according to `policy`
 fn remove_worktree_internal(
     ctx: &CommandContext,
     worktree_path: &std::path::Path,
     branch_name: Option<&str>,
     label: &str,
-    branch_policy: &BranchPolicy,
+    policy: &RemovalPolicy,
     mp: &MultiProgress,
 ) -> Result<()> {
     let git = &ctx.git;
@@ -90,7 +90,7 @@ fn remove_worktree_internal(
     }
 
     // Remove worktree using git worktree remove
-    if let Err(e) = git.remove_worktree(worktree_path, branch_policy.force, Some(repo_root)) {
+    if let Err(e) = git.remove_worktree(worktree_path, policy.force_worktree, Some(repo_root)) {
         // Clear header spinner on error
         if let Some(pb) = header_pb {
             pb.finish_and_clear();
@@ -107,7 +107,7 @@ fn remove_worktree_internal(
         eprintln!("{removed}");
     }
 
-    let force = match branch_policy.deletion {
+    let force_branch = match policy.deletion {
         BranchDeletion::Keep => return Ok(()),
         BranchDeletion::Safe => false,
         BranchDeletion::Force => true,
@@ -131,14 +131,14 @@ fn remove_worktree_internal(
     };
 
     if let Some(branch) = branch_name {
-        if branch_policy.is_default(branch) {
+        if policy.is_default(branch) {
             kept(format!("Kept branch: {branch} (default branch)"));
         } else if git
-            .remove_branch(branch, force, Some(repo_root))
+            .remove_branch(branch, force_branch, Some(repo_root))
             .unwrap_or(false)
         {
             deleted(branch);
-        } else if !force {
+        } else if !force_branch {
             kept(format!(
                 "Kept branch: {branch} (not fully merged; use --force-branch to delete)"
             ));
@@ -148,7 +148,7 @@ fn remove_worktree_internal(
     // The branch the worktree was created with; only a merged one goes, and a failure stays
     // quiet because the name may belong to a branch that is unmerged or in use elsewhere
     let creation_branch = branch_from_template(&config.worktree.dir, repo_root, worktree_path)
-        .filter(|name| branch_name != Some(name.as_str()) && !branch_policy.is_default(name));
+        .filter(|name| branch_name != Some(name.as_str()) && !policy.is_default(name));
     if let Some(name) = creation_branch {
         if git
             .remove_branch(&name, false, Some(repo_root))
@@ -188,30 +188,36 @@ fn preflight(
             continue;
         }
         let checks = git
-            .rev_parse(
+            .run(
                 &["status", "--porcelain", "--ignore-submodules=none"],
                 Some(path),
             )
             .and_then(|status| {
-                git.rev_parse(&["ls-files", "-s"], Some(path))
-                    .map(|files| (status, files))
+                let files = git.run(&["ls-files", "-s", "-z"], Some(path))?;
+                let modules = git.run(&["rev-parse", "--git-path", "modules"], Some(path))?;
+                Ok((status, files, path.join(modules.trim())))
             });
         match checks {
-            Err(e) => refused.push((path.to_path_buf(), format!("cannot check: {e}"))),
-            Ok((status, files)) => {
+            Err(e) => refused.push((
+                path.to_path_buf(),
+                format!("cannot check: {}", e.to_string().trim_end()),
+            )),
+            Ok((status, files, modules)) => {
                 if !status.trim().is_empty() {
                     refused.push((
                         path.to_path_buf(),
                         "has modified or untracked files (use --force to discard them)".to_string(),
                     ));
                 }
-                // Same rule as git: a gitlink whose directory holds a .git is an initialized submodule
-                let initialized = files.lines().any(|line| {
-                    line.starts_with("160000 ")
-                        && line
-                            .split_once('\t')
-                            .is_some_and(|(_, name)| path.join(name).join(".git").exists())
-                });
+                // Same rules as git: the worktree's modules directory (kept after a deinit), or a
+                // gitlink whose directory holds a .git
+                let initialized = modules.is_dir()
+                    || files.split('\0').any(|entry| {
+                        entry.starts_with("160000 ")
+                            && entry
+                                .split_once('\t')
+                                .is_some_and(|(_, name)| path.join(name).join(".git").exists())
+                    });
                 if initialized {
                     refused.push((
                         path.to_path_buf(),
@@ -246,9 +252,9 @@ pub fn cmd_rm_many(
     let list_stdout = ctx.worktree_list_stdout()?;
     let root = ctx.worktree_root();
     let current = current_worktree_toplevel();
-    let branch_policy = BranchPolicy {
+    let policy = RemovalPolicy {
         deletion: branch_deletion,
-        force,
+        force_worktree: force,
         default_branches: ctx.git.default_branches(Some(&ctx.repo_root)),
     };
 
@@ -381,7 +387,7 @@ pub fn cmd_rm_many(
             worktree_path,
             branch_name.as_deref(),
             label,
-            &branch_policy,
+            &policy,
             &mp,
         )?;
     }
@@ -395,7 +401,7 @@ pub fn cmd_rm_many(
             worktree_path,
             branch_name.as_deref(),
             label,
-            &branch_policy,
+            &policy,
             &mp,
         )?;
 

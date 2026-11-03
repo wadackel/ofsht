@@ -7,6 +7,8 @@ use std::process::{Command, Output};
 
 fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .args(args)
         .current_dir(dir)
         .output()
@@ -99,7 +101,10 @@ fn refused_targets_are_all_listed_and_nothing_runs() {
         stderr.contains("has modified or untracked files"),
         "{stderr}"
     );
-    assert!(stderr.contains("locked"), "{stderr}");
+    assert!(
+        stderr.contains("slot-3: locked (run git worktree unlock"),
+        "{stderr}"
+    );
     assert!(slot_1.exists() && slot_2.exists() && slot_3.exists());
     assert!(!fixture.hook_log().exists(), "a delete hook ran");
 }
@@ -229,6 +234,16 @@ fn force_removes_worktree_with_submodule() {
         stderr(&refused)
     );
     assert!(slot_1.exists());
+
+    // git keeps refusing after a deinit, because the worktree's modules directory remains
+    git(&slot_1, &["submodule", "deinit", "-q", "-f", "lib"]);
+    let deinitialized = fixture.ofsht(&["--color=never", "rm", "slot-1"]);
+    assert!(!deinitialized.status.success());
+    assert!(
+        stderr(&deinitialized).contains("contains initialized submodules"),
+        "{}",
+        stderr(&deinitialized)
+    );
 
     let forced = fixture.ofsht(&["--color=never", "rm", "--force", "slot-1"]);
     assert!(forced.status.success(), "{}", stderr(&forced));

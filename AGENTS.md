@@ -50,6 +50,7 @@ cargo run -- rm feature-a feature-b  # Remove multiple worktrees
 cargo run -- rm feature-a . feature-b  # Remove multiple including current
 cargo run -- rm --keep-branch feature-a   # Remove worktree, keep branch
 cargo run -- rm --force-branch feature-a  # Delete branch even if unmerged
+cargo run -- rm --force feature-a  # Remove even with modified files or submodules (not locked ones)
 
 # Test open command (must be run inside tmux)
 cargo run -- open            # Open all worktrees as windows

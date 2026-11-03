@@ -57,6 +57,9 @@ pub trait GitClient {
     /// `fetch`).
     fn fetch(&self, args: &[&str], dir: Option<&Path>) -> Result<()>;
 
+    /// Run `git <args>` and return stdout; the error names the subcommand and git's stderr.
+    fn run(&self, args: &[&str], dir: Option<&Path>) -> Result<String>;
+
     /// Run `git for-each-ref --format=<format> <refs...>` and return stdout.
     fn for_each_ref(&self, refs: &[&str], format: &str, dir: Option<&Path>) -> Result<String>;
 
@@ -189,6 +192,12 @@ impl GitClient for RealGitClient {
         run_capturing(cmd, "rev-parse")
     }
 
+    fn run(&self, args: &[&str], dir: Option<&Path>) -> Result<String> {
+        let mut cmd = build_command(dir);
+        cmd.args(args);
+        run_capturing(cmd, args.first().copied().unwrap_or_default())
+    }
+
     fn fetch(&self, args: &[&str], dir: Option<&Path>) -> Result<()> {
         let mut cmd = build_command(dir);
         cmd.args(args);
@@ -297,6 +306,10 @@ pub mod tests {
                 anyhow::bail!("Mock git rev-parse failure");
             }
             Ok(self.rev_parse_output.clone())
+        }
+
+        fn run(&self, _args: &[&str], _dir: Option<&Path>) -> Result<String> {
+            Ok(String::new())
         }
 
         fn fetch(&self, _args: &[&str], _dir: Option<&Path>) -> Result<()> {
