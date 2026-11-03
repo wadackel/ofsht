@@ -2,16 +2,17 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
 
   // Extend from best practices preset for hardened defaults
-  // (digest pinning, config migrations, abandonment warnings, etc.)
+  // (config migrations, abandonment warnings, etc.)
   "extends": [
     "config:best-practices",
     ":dependencyDashboard",
     ":semanticCommits",
     ":separateMajorReleases",
     ":automergeDisabled",
-    // Pin GitHub Actions to immutable SHAs while preserving readable version comments
-    "helpers:pinGitHubActionDigestsToSemver",
   ],
+
+  // actions.lock holds the commits, so uses: lines stay on version tags.
+  "ignorePresets": ["helpers:pinGitHubActionDigests"],
 
   // Only manage Cargo and GitHub Actions dependencies
   "enabledManagers": ["cargo", "github-actions"],

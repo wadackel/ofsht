@@ -53,7 +53,7 @@
           packages = with pkgs; [
             just
             vhs
-            zizmor
+            uv
           ];
         };
       });

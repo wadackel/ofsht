@@ -7,8 +7,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-    - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+    - uses: DeterminateSystems/nix-installer-action@v22
+    - uses: nix-community/cache-nix-action@v7.0.2
       with:
         primary-key: ${{ inputs.cache-key-prefix }}-${{ hashFiles('flake.nix', 'flake.lock', 'Cargo.lock', 'rust-toolchain.toml') }}
         restore-prefixes-first-match: ${{ inputs.cache-key-prefix }}-
