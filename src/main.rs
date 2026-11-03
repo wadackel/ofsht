@@ -46,6 +46,7 @@ fn main() -> Result<()> {
                 no_tmux,
                 detach,
             },
+            cli.verbose,
             color_mode,
         ),
         Commands::Create {
@@ -56,6 +57,7 @@ fn main() -> Result<()> {
             branch.as_deref(),
             start_point.as_deref(),
             detach,
+            cli.verbose,
             color_mode,
         ),
         Commands::Ls { show_path } => commands::list::cmd_list(show_path, color_mode),
@@ -77,6 +79,7 @@ fn main() -> Result<()> {
                 branch_deletion,
                 force,
                 dry_run,
+                verbose: cli.verbose,
             };
             commands::rm::cmd_rm_many(&targets, &options, color_mode)
         }
@@ -89,6 +92,10 @@ fn main() -> Result<()> {
         Commands::Completion { shell } => commands::completion::cmd_completion(&shell),
         Commands::ShellInit { shell } => commands::shell_init::cmd_shell_init(&shell),
         Commands::Open { pane, window } => commands::open::cmd_open(pane, window, color_mode),
-        Commands::Sync { run, copy, link } => commands::sync::cmd_sync(run, copy, link, color_mode),
+        Commands::Sync { run, copy, link } => commands::sync::cmd_sync(
+            &commands::sync::SyncOptions { run, copy, link },
+            cli.verbose,
+            color_mode,
+        ),
     }
 }

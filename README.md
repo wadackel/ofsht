@@ -433,6 +433,25 @@ link = { ".vscode" = ".vscode" }
 run = ["echo Cleaning up..."]
 ```
 
+Run hooks execute in the target worktree. Each receives:
+
+| Variable | Value |
+| --- | --- |
+| `OFSHT_WORKTREE_PATH` | Absolute path to the target worktree |
+| `OFSHT_WORKTREE_NAME` | Worktree name shown by `ofsht ls` (a path when the short name is ambiguous) |
+| `OFSHT_BRANCH` | Current branch, or an empty string for a detached HEAD |
+| `OFSHT_REPO_ROOT` | Absolute path to the main repository |
+
+Use `ofsht --verbose add feature` (also `create`, `sync`, and `rm`) to show full
+hook stdout and stderr on ofsht's stderr. Without `--verbose`, successful commands
+show a concise summary and failed commands show their last ten output lines.
+
+If any create hook fails, `add`, `create`, and `sync` exit nonzero after attempting
+the remaining actions. A newly created worktree is preserved for inspection and
+`add` does not print a navigation path, so the shell wrapper stays in place.
+After correcting the hook, run `ofsht sync` to retry setup. Delete-hook failures
+remain warnings and do not prevent removal.
+
 #### Generating Configuration Files
 
 Use `ofsht init` to generate configuration files with default settings:

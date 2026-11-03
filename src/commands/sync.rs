@@ -11,13 +11,20 @@ use crate::config::HookActions;
 use crate::domain::worktree::WorktreeList;
 use crate::hooks;
 
+pub struct SyncOptions {
+    pub run: bool,
+    pub copy: bool,
+    pub link: bool,
+}
+
 /// Sync hooks.create actions to all existing non-main worktrees
 ///
 /// # Errors
 /// Returns an error if not in a git repository, config loading fails,
 /// git worktree list fails, or any hook execution fails.
 #[allow(clippy::too_many_lines, clippy::missing_panics_doc)]
-pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode) -> Result<()> {
+pub fn cmd_sync(options: &SyncOptions, verbose: bool, color_mode: color::ColorMode) -> Result<()> {
+    let &SyncOptions { run, copy, link } = options;
     let ctx = CommandContext::new_strict(color_mode)?;
 
     // No flags = all actions; otherwise use only the specified ones
@@ -99,14 +106,15 @@ pub fn cmd_sync(run: bool, copy: bool, link: bool, color_mode: color::ColorMode)
             continue;
         }
 
-        if let Err(e) = hooks::execute_hooks_with_mp(
-            &actions,
+        let hook_context = hooks::HookContext::new(
             worktree_path,
             &ctx.repo_root,
-            ctx.color_mode,
-            "  ",
-            &mp,
-        ) {
+            ctx.worktree_root().as_deref(),
+            verbose,
+        )?;
+        if let Err(e) =
+            hooks::execute_hooks_with_mp(&actions, &hook_context, ctx.color_mode, "  ", &mp)
+        {
             errors.push(format!("{path}: {e}"));
         }
 

@@ -33,10 +33,12 @@ pub struct RmOptions {
     pub force: bool,
     /// `--dry-run`: print the removal plan and change nothing
     pub dry_run: bool,
+    pub verbose: bool,
 }
 
 /// How `rm` treats worktrees and their branches, resolved once for every target
 struct RemovalPolicy {
+    verbose: bool,
     deletion: BranchDeletion,
     /// `git worktree remove --force`: discard modified and untracked files and submodules
     force_worktree: bool,
@@ -146,10 +148,15 @@ fn remove_worktree_internal(
             || !config.hooks.delete.copy.is_empty()
             || !config.hooks.delete.link.is_empty())
     {
-        hooks::execute_hooks_lenient_with_mp(
-            &config.hooks.delete,
+        let hook_context = hooks::HookContext::new(
             worktree_path,
             repo_root,
+            ctx.worktree_root().as_deref(),
+            policy.verbose,
+        )?;
+        hooks::execute_hooks_lenient_with_mp(
+            &config.hooks.delete,
+            &hook_context,
             color_mode,
             "  ",
             mp,
@@ -417,6 +424,7 @@ pub fn cmd_rm_many(
         branch_deletion,
         force,
         dry_run,
+        verbose,
     } = options;
     // Resolve repo_root, config, and git client once for the whole removal flow.
     let ctx = CommandContext::new_strict(color_mode)?;
@@ -426,6 +434,7 @@ pub fn cmd_rm_many(
     let root = ctx.worktree_root();
     let current = current_worktree_toplevel();
     let policy = RemovalPolicy {
+        verbose,
         deletion: branch_deletion,
         force_worktree: force,
         default_branches: ctx.git.default_branches(Some(&ctx.repo_root)),
