@@ -73,6 +73,57 @@ fn test_rm_current_from_worktree() {
 }
 
 #[test]
+fn test_rm_current_by_name_prints_main_path() {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let repo_dir = temp.child("test-repo");
+    repo_dir.create_dir_all().unwrap();
+    for args in [
+        &["init"][..],
+        &["config", "user.name", "Test User"],
+        &["config", "user.email", "test@example.com"],
+        &["commit", "--allow-empty", "-m", "Initial commit"],
+    ] {
+        Command::new("git")
+            .args(args)
+            .current_dir(repo_dir.path())
+            .output()
+            .unwrap();
+    }
+    Command::cargo_bin("ofsht")
+        .unwrap()
+        .args(["add", "slot-1"])
+        .current_dir(repo_dir.path())
+        .assert()
+        .success();
+    let worktree_path = temp.path().join("test-repo-worktrees/slot-1");
+    let subdirectory = worktree_path.join("sub");
+    std::fs::create_dir_all(&subdirectory).unwrap();
+
+    // From a subdirectory, so comparing the cwd with the worktree path cannot pass
+    let output = Command::cargo_bin("ofsht")
+        .unwrap()
+        .args(["--color=never", "rm", "--keep-branch", "slot-1"])
+        .current_dir(&subdirectory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.lines().count(), 1, "stdout: {stdout:?}");
+    assert!(
+        stdout.trim_end().ends_with("test-repo"),
+        "stdout: {stdout:?}"
+    );
+    assert!(!worktree_path.exists());
+
+    temp.close().unwrap();
+}
+
+#[test]
 fn test_rm_current_from_main_worktree() {
     let temp = assert_fs::TempDir::new().unwrap();
     let repo_dir = temp.child("test-repo");

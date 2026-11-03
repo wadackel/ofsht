@@ -394,3 +394,21 @@ fn names_use_path_for_worktree_sharing_a_name() {
         ["", "review", "wt1", "wt2", "check", "~/tmp/review"]
     );
 }
+
+#[test]
+fn ls_marks_current_worktree_from_subdirectory() {
+    let fixture = Fixture::new();
+    let subdirectory = fixture.path("dev/myapp-worktrees/wt1/sub");
+    std::fs::create_dir_all(&subdirectory).unwrap();
+
+    let output = fixture.ofsht_in(&subdirectory, &["ls", "--show-path"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let marked: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("* "))
+        .collect();
+
+    assert_eq!(marked.len(), 1, "{stdout}");
+    assert!(marked[0].contains("~/dev/myapp-worktrees/wt1 "), "{stdout}");
+}

@@ -6,6 +6,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use crate::color;
+use crate::commands::common::current_worktree_toplevel;
 use crate::commands::context::CommandContext;
 use crate::commands::list_display::format_worktree_table;
 use crate::domain::worktree::WorktreeList;
@@ -23,8 +24,8 @@ pub fn cmd_list(show_path: bool, color_mode: color::ColorMode) -> Result<()> {
     let stdout = ctx.worktree_list_stdout()?;
     let root = ctx.worktree_root();
 
-    // Get current directory for active worktree detection
-    let current_dir = std::env::current_dir().ok();
+    // The current directory itself is the fallback for layouts without a work tree (bare)
+    let current_dir = current_worktree_toplevel().or_else(|| std::env::current_dir().ok());
 
     // Determine stream/format based ONLY on TTY status
     // Color mode only affects ANSI emission, not which stream or format
