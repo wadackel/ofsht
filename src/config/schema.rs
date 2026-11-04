@@ -202,6 +202,9 @@ impl fmt::Display for OpenMode {
 /// tmux integration configuration
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TmuxConfig {
+    /// Close eligible single-pane windows after successful worktree removal.
+    #[serde(default)]
+    pub close_on_rm: bool,
     /// Automatic tmux integration behavior
     #[serde(default)]
     pub behavior: TmuxBehavior,

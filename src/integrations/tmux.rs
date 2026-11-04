@@ -1,8 +1,11 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::must_use_candidate)]
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use std::path::Path;
-use std::process::Command;
+mod cleanup;
+mod session;
+pub use cleanup::CleanupPlan;
+pub use session::{owning_worktree, Session};
 
 /// tmux integration trait
 pub trait TmuxLauncher {
@@ -28,88 +31,59 @@ pub trait TmuxLauncher {
 pub struct RealTmuxLauncher;
 
 impl TmuxLauncher for RealTmuxLauncher {
-    /// Detect if tmux is available and we're inside a tmux session
     fn detect(&self) -> Result<()> {
-        // Check if we're inside a tmux session
-        if std::env::var_os("TMUX").is_none() {
-            bail!(
-                "tmux integration requires running inside a tmux session; \
-                 try again from a tmux pane or use --no-tmux to disable"
-            );
-        }
-
-        // Check if tmux binary exists
-        let status = Command::new("tmux")
-            .arg("-V")
-            .output()
-            .context("Failed to execute tmux command")?;
-
-        if !status.status.success() {
-            bail!("tmux binary not found or not executable");
-        }
-
-        Ok(())
+        Session::current().map(|_| ())
     }
-
-    /// Create a new tmux window at the specified path
     fn create_window(&self, path: &Path, branch: &str) -> Result<()> {
-        // Ensure we're in a tmux session
-        self.detect()?;
+        Session::current()?.create_window(path, branch)
+    }
+    fn create_pane(&self, path: &Path) -> Result<()> {
+        Session::current()?.create_pane(path)
+    }
+    fn split_pane(&self, path: &Path) -> Result<()> {
+        Session::current()?.split_pane(path)
+    }
+    fn select_tiled_layout(&self) -> Result<()> {
+        Session::current()?.select_tiled_layout()
+    }
+}
 
-        let name = sanitize_window_name(branch);
-
-        let output = Command::new("tmux")
-            .arg("new-window")
-            .arg("-n")
-            .arg(&name)
-            .arg("-c")
-            .arg(path)
-            .output()
-            .context("Failed to execute tmux new-window command")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("tmux new-window command failed: {}", stderr.trim());
-        }
-
+impl TmuxLauncher for Session {
+    fn detect(&self) -> Result<()> {
         Ok(())
     }
-
-    /// Create a new tmux pane at the specified path
+    fn create_window(&self, path: &Path, branch: &str) -> Result<()> {
+        if !path.is_dir() {
+            bail!("Worktree directory not found: {}", path.display());
+        }
+        let mut cmd = session::command()?;
+        cmd.args([
+            "new-window",
+            "-t",
+            &format!("{}:", self.id),
+            "-n",
+            &sanitize_window_name(branch),
+            "-c",
+        ])
+        .arg(session::directory_arg(path)?);
+        session::output(cmd)?;
+        Ok(())
+    }
     fn create_pane(&self, path: &Path) -> Result<()> {
-        // Ensure we're in a tmux session
-        self.detect()?;
         self.split_pane(path)
     }
-
     fn split_pane(&self, path: &Path) -> Result<()> {
-        let output = Command::new("tmux")
-            .arg("split-window")
-            .arg("-h")
-            .arg("-c")
-            .arg(path)
-            .output()
-            .context("Failed to execute tmux split-window command")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("tmux split-window command failed: {}", stderr.trim());
+        if !path.is_dir() {
+            bail!("Worktree directory not found: {}", path.display());
         }
-
+        let mut cmd = session::command()?;
+        cmd.args(["split-window", "-h", "-t", &self.pane, "-c"])
+            .arg(session::directory_arg(path)?);
+        session::output(cmd)?;
         Ok(())
     }
-
     fn select_tiled_layout(&self) -> Result<()> {
-        let output = Command::new("tmux")
-            .args(["select-layout", "tiled"])
-            .output()
-            .context("Failed to execute tmux select-layout command")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("tmux select-layout command failed: {}", stderr.trim());
-        }
-
+        session::text(&["select-layout", "-t", &self.window, "tiled"])?;
         Ok(())
     }
 }

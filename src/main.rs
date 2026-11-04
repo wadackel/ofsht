@@ -15,6 +15,7 @@ mod stdin;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use clap_complete::env::{CompleteEnv, Shells};
+use output::is_broken_stdout;
 
 // Use shared CLI definitions from cli module
 use cli::{Cli, Commands};
@@ -24,17 +25,12 @@ fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) if is_broken_stdout(&error) => std::process::ExitCode::SUCCESS,
+        Err(error) if error.is::<output::ReportedError>() => std::process::ExitCode::FAILURE,
         Err(error) => {
             eprintln!("Error: {error:?}");
             std::process::ExitCode::FAILURE
         }
     }
-}
-
-fn is_broken_stdout(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<output::StdoutError>()
-        .is_some_and(|error| error.0.kind() == std::io::ErrorKind::BrokenPipe)
 }
 
 fn run() -> Result<()> {

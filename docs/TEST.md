@@ -352,6 +352,20 @@ must be no panic. The deterministic closed-reader tests in
 `cargo test --test cli_diagnostics` also cover table output, navigation, completion
 instructions, and mutation commands after their filesystem work succeeds.
 
+## Tmux Lifecycle Verification
+
+For tmux lifecycle checks, use an isolated server/socket and disposable repositories.
+Run `ofsht open` twice and verify the second run creates no duplicate windows or
+panes. Force a partial split failure in a small terminal and compare the reported
+opened count with the actual pane count; the command must exit nonzero.
+
+Window cleanup requires global `integration.tmux.close_on_rm = true`. Verify that
+only successfully removed worktrees' eligible single-pane windows disappear, while
+default-off, dry-run, grouped sessions, shared callers, moved panes, and multi-pane
+windows remain. Independent links in another session must survive. The current
+window must close only after Git cleanup and navigation output. Automated tests in
+`cargo test --test tmux_lifecycle` create and tear down only their own tmux servers.
+
 ## Hook Functionality Verification
 
 Verify inheritance with a global `worktree.dir` and global run/copy/link actions.

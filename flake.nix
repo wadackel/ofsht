@@ -52,6 +52,7 @@
           inputsFrom = [ ofsht ];
           packages = with pkgs; [
             fzf
+            tmux
             just
             vhs
             uv

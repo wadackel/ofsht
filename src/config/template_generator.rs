@@ -72,14 +72,17 @@ behavior = \"auto\"
 # Determines what to create: a new window or split pane
 create = \"window\"  # \"window\" or \"pane\"
 # Default mode for `ofsht open`: \"pane\" or \"window\"
-open = \"window\""
+open = \"window\"
+# Closing windows terminates their processes; enable only for automatic removal cleanup.
+close_on_rm = false"
         } else {
             "[integration.tmux]
 # Configure tmux integration behavior
 # tmux not detected - install from https://github.com/tmux/tmux
 behavior = \"never\"
 create = \"window\"
-open = \"window\""
+open = \"window\"
+close_on_rm = false"
         };
 
         let gh_section = if self.gh_available {
