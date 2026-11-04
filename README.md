@@ -353,7 +353,7 @@ display text, including paths with spaces.
 
 ### Shell Integration
 
-`ofsht` provides shell integration for automatic directory changing with `cd` and `add` commands.
+`ofsht` provides shell integration for automatic directory changing with `cd`, `add`, and `rm` commands.
 
 **Setup** (one-time):
 
@@ -394,8 +394,13 @@ ofsht create feature-awesome
 
 **How it works**: The `shell-init` command generates a wrapper function that intercepts `cd`, `add`, and `rm` subcommands, automatically executing `cd` after the operation completes.
 
-> [!CAUTION]
-> The shell wrapper only works in interactive shells. You must add the `eval "$(ofsht shell-init <shell>)"` line to your shell's rc file (`~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish`) and reload it. The wrapper will not work in non-interactive scripts.
+Global options can precede the subcommand: `ofsht --color=never cd feature` still
+navigates. Help such as `ofsht rm --help` is printed normally without changing
+directories. Arguments after `--` remain positional values.
+
+The function must be loaded in the shell where navigation is needed. Add the setup
+line to your shell's rc file for interactive use, or evaluate it explicitly in a
+script. Fish uses `ofsht shell-init fish | source` in either case.
 
 ### Repository Layouts
 

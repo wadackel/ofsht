@@ -352,6 +352,18 @@ must be no panic. The deterministic closed-reader tests in
 `cargo test --test cli_diagnostics` also cover table output, navigation, completion
 instructions, and mutation commands after their filesystem work succeeds.
 
+## Shell Wrapper Verification
+
+Load the generated wrapper in Bash, Zsh, and Fish. Run `ofsht cd --help`,
+`ofsht add -h`, and `ofsht rm --help`; each must print help and keep the current
+directory. Verify that `ofsht --color=never cd feature` and
+`ofsht --color never --verbose cd feature` still navigate. In disposable
+repositories, check automatic navigation after `add` and `rm .` as well.
+
+Run `cargo test --test shell_wrappers` inside the Nix dev shell for all three
+shells. The suite also checks spaces, stdin input, exit codes, and positional
+arguments after `--`.
+
 ## Tmux Lifecycle Verification
 
 For tmux lifecycle checks, use an isolated server/socket and disposable repositories.

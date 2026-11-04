@@ -1,23 +1,47 @@
-# ofsht shell integration for Fish
-#
-# This function wraps the ofsht command to provide automatic directory
-# changing for 'cd', 'add', and 'rm' subcommands.
-#
-# Usage:
-#   Add this to your ~/.config/fish/config.fish:
-#   ofsht shell-init fish | source
-
 function ofsht
-    # Handle cd, add, and rm subcommands with automatic directory changing
-    if test "$argv[1]" = "cd"; or test "$argv[1]" = "add"; or test "$argv[1]" = "rm"
-        set -l result (command ofsht $argv)
-        or return $status
-        if test -n "$result"
-            cd -- $result
-            or return $status
+    set -l _ofsht_command ""
+    set -l _ofsht_color_value 0
+    for _ofsht_arg in $argv
+        if test $_ofsht_color_value = 1
+            set _ofsht_color_value 0
+            continue
         end
-    else
-        # Pass through all other subcommands
+        switch "$_ofsht_arg"
+            case --color
+                set _ofsht_color_value 1
+            case '--color=*' --verbose -v
+            case cd add rm
+                set _ofsht_command $_ofsht_arg
+                break
+            case '*'
+                command ofsht $argv
+                return $status
+        end
+    end
+
+    if test -z "$_ofsht_command"
         command ofsht $argv
+        return $status
+    end
+
+    for _ofsht_arg in $argv
+        switch "$_ofsht_arg"
+            case --
+                break
+            case --help --version
+                command ofsht $argv
+                return $status
+            case '--*'
+            case '-*h*' '-*V*'
+                command ofsht $argv
+                return $status
+        end
+    end
+
+    set -l _ofsht_result (command ofsht $argv)
+    or return $status
+    if test -n "$_ofsht_result"
+        cd -- "$_ofsht_result"
+        or return $status
     end
 end
