@@ -211,16 +211,49 @@ ofsht add feature-awesome --tmux      # Creates worktree and opens new tmux wind
 #### List Worktrees
 
 ```bash
-# List all worktrees
+# Readable table in a terminal; simple names when piped
 ofsht ls
-# /path/to/my-project                                d070cdf [main]
-# /path/to/worktrees/my-project/feature-awesome      d070cdf [feature-awesome]
 
-# Show only paths (useful for scripting)
+# Include paths in the table
 ofsht ls --show-path
-# /path/to/my-project
-# /path/to/worktrees/my-project/feature-awesome
+
+# Include working-tree changes and upstream divergence
+ofsht ls --status
+
+# Structured output, with optional status collection
+ofsht ls --json
+ofsht ls --json --status
 ```
+
+The main worktree is named `@` and displays its actual branch. Rebase, merge and
+bisect operations appear beside the branch, such as `[feature (rebasing)]`.
+`ofsht cd feature` also finds the worktree during a rebase. Locked, prunable and
+missing worktrees remain visible with state markers.
+
+`--status` adds `clean`/`dirty` and `+N`/`-N` counts ahead of or behind the local
+upstream reference. It never fetches. Status collection can be slower in large
+repositories, so it runs only when requested by `ls`; interactive fzf lists include
+it automatically. `unknown` means inspection failed, not that the worktree is clean.
+These markers describe observed state and do not guarantee a worktree is safe to reuse.
+
+`--json` always writes an array to stdout without colors, in Git's worktree order.
+Each object contains `name`, absolute `path`, actual `branch` (null when detached),
+full `head` (null before the first commit), `is_main`, `is_current`, and `state`.
+The `state` object contains:
+
+| Fields | Meaning |
+| --- | --- |
+| `operation`, `operation_branch` | Operation name and its original branch when known; separate from the actual branch |
+| `locked`, `lock_reason`, `prunable`, `prune_reason` | Registry flags and optional reasons |
+| `missing` | The registered directory is absent |
+| `dirty`, `upstream`, `ahead`, `behind` | Status collected by `--status`; null when not collected or unavailable |
+| `error` | Inspection failure, or null on success |
+
+Operation names are `rebase`, `merge`, `bisect`, `am`, `cherry_pick`, and `revert`.
+Unknown optional values are null. JSON requires UTF-8 paths and metadata and
+preserves embedded whitespace and quotes. Plain `ofsht ls` in a pipe retains its
+existing `@`, branch-name, or detached-path output. `--status` requests a table
+even in a pipe; `--json` cannot be combined with `--show-path`.
 
 #### Navigate to a Worktree
 

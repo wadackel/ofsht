@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod worktree_state;
+
 /// What a name means among remote-tracking refs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteTracking {
@@ -95,6 +97,13 @@ pub trait GitClient {
 pub struct RealGitClient;
 
 impl RealGitClient {
+    pub fn worktree_listing_z(dir: &Path) -> Result<String> {
+        let mut cmd = build_command(Some(dir));
+        cmd.args(["worktree", "list", "--porcelain", "-z"]);
+        String::from_utf8(run_capturing_bytes(cmd, "worktree list")?)
+            .context("JSON worktree listing requires UTF-8 paths and metadata")
+    }
+
     /// Whether a literal path is tracked, including staged deletions from HEAD.
     pub fn path_is_tracked(dir: &Path, path: &Path) -> Result<bool> {
         let mut cmd = build_command(Some(dir));

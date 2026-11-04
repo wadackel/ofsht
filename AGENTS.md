@@ -43,6 +43,8 @@ nix develop --command just clippy-ci
 # Run the CLI in development
 cargo run -- add feature-branch
 cargo run -- ls
+cargo run -- ls --status
+cargo run -- ls --json --status
 cargo run -- cd feature-branch
 cargo run -- rm .
 cargo run -- rm /path/to/worktree
@@ -112,13 +114,15 @@ src/
 │   └── sync.rs       # Sync hooks to existing worktrees
 ├── config.rs         # TOML configuration loading (local + global)
 ├── domain/           # Domain models and logic
-│   └── worktree.rs   # Worktree entry parsing and formatting
+│   ├── worktree.rs   # Worktree entry parsing and formatting
+│   └── worktree_state.rs # Observed operation and availability state
 ├── hooks.rs          # Hook execution engine (run/copy/link)
 ├── stdin.rs          # Stdin input helpers (TTY-aware) for piped argument resolution
 ├── integrations/     # External tool integrations
 │   ├── fzf/          # Interactive selection
 │   ├── gh/           # GitHub CLI integration
 │   ├── git/          # Git operations abstraction
+│   │   └── worktree_state.rs # Read-only operation/status inspection
 │   ├── tmux/         # Tmux window/pane creation
 │   └── zoxide/       # Directory tracking
 ├── service/          # Business logic layer
@@ -179,7 +183,7 @@ src/
 **Interactive Selection with fzf** (`integrations/fzf/`)
 - When `ofsht cd` or `ofsht rm` is run without arguments, fzf launches for interactive selection
 - Display format: `{worktree_name} · [{branch}] · {display_path}` with column alignment
-  - Main worktree: name=`@`, branch=`[@]`
+  - Main worktree: name=`@`, branch shows its actual symbolic branch or detached state
   - Detached HEAD: branch=`[detached]`
   - Branch bracket style `[...]` matches `format_worktree_table` in `ofsht ls`
 - Graceful degradation: returns error if fzf is disabled or not installed
@@ -195,6 +199,9 @@ src/
 - `WorktreeList::resolve_name()`: adds absolute paths and paths relative to the current directory
 - `WorktreeList::short_name()` returns a name only when typing it reaches that worktree; `display_names()` falls back to the path, so `ofsht ls`, fzf, and `ofsht open` agree with what `cd` and `rm` accept
 - `cd` also accepts the main worktree's branch name and path; `rm` refuses both with `Cannot remove main worktree`
+- Read-only navigation enriches the list with a separate operation branch for rebase/bisect; the actual branch and removal/creation policy remain unchanged.
+- Readable `ls` and fzf show operation, locked, prunable and missing state. `ls --status` adds dirty/upstream divergence; fzf collects it automatically. Inspection verifies both the registered root and common Git directory, and failures remain unknown.
+- `ls --json` emits identity and state with full HEAD, absolute UTF-8 paths, and null unknowns. It uses NUL-delimited porcelain without changing mutation callers' legacy protocol. Plain piped `ls` retains its fast name-only contract.
 
 **Path Template Expansion** (`commands/add.rs`, `commands/create.rs`)
 - Template variables: `{repo}` and `{branch}`

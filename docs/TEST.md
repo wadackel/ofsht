@@ -352,6 +352,24 @@ must be no panic. The deterministic closed-reader tests in
 `cargo test --test cli_diagnostics` also cover table output, navigation, completion
 instructions, and mutation commands after their filesystem work succeeds.
 
+## Worktree State and JSON Verification
+
+Use disposable repositories to pause both merge-backend and apply-backend rebases,
+create a merge conflict, and start a bisect. Verify operation labels in
+`ofsht ls --show-path` and the fzf list, and navigate by the original rebase branch.
+An ambiguous branch/directory name must still fail. Removal safeguards must still
+refuse a worktree with an operation in progress.
+
+Compare `ofsht ls --status` and `ofsht ls --json --status` with Git for dirty files,
+submodules, local upstream divergence, locked and missing worktrees. Recreate a
+missing registered path as an unrelated repository and verify it remains unknown,
+with null dirty/divergence fields. Check that plain piped `ls` retains its previous
+output and that `ls --json` without `--status` leaves expensive status fields null.
+The main row must show name `@` and its actual branch in both table and picker.
+
+Run `cargo test --test worktree_state` for real-Git and malformed-status regressions.
+Linux also verifies JSON rejects non-UTF-8 paths rather than replacing their bytes.
+
 ## Shell Wrapper Verification
 
 Load the generated wrapper in Bash, Zsh, and Fish. Run `ofsht cd --help`,
