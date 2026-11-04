@@ -51,6 +51,9 @@
         devShells.default = craneLib.devShell {
           inputsFrom = [ ofsht ];
           packages = with pkgs; [
+            bash
+            zsh
+            fish
             fzf
             tmux
             just

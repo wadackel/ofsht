@@ -382,19 +382,11 @@ The `add` command accepts an optional `start_point` argument:
 - Supported shells: bash, zsh, fish
 
 **Template Structure** (`templates/*.{sh,fish}`):
-```bash
-# All templates follow the same pattern:
-ofsht() {  # or `function ofsht` in Fish
-    if [[ "$1" == "cd" ]] || [[ "$1" == "add" ]] || [[ "$1" == "rm" ]]; then
-        # Capture output and cd to it
-        local result=$(command ofsht "$@") || return $?
-        [[ -n "$result" ]] && cd -- "$result"
-    else
-        # Pass through all other subcommands
-        command ofsht "$@"
-    fi
-}
-```
+The wrappers find the subcommand after known global options (`--color VALUE`,
+`--color=VALUE`, `-v`, `--verbose`) without changing the original arguments. Help
+and version requests before `--` pass through to the binary. Only navigation
+commands capture stdout and change directory; all other commands and unknown
+leading options are left to clap. Arguments after `--` are positional data.
 
 **Key Design Decisions**:
 - **wtp-style wrapping**: All `ofsht` commands go through the wrapper function (not separate `ofsht_cd` / `ofsht_add` functions like zoxide)
@@ -420,7 +412,9 @@ ofsht ls             # Normal operation (no directory change)
 - **Bash/Zsh**: Nearly identical, uses `[[ ]]` conditionals and `local` variables
 - **Fish**: Uses `test` command, `set -l` for local variables, `function...end` syntax
 
-**Testing**: Manual testing required for each shell (see docs/TEST.md). No automated tests due to shell environment dependencies.
+**Testing**: `tests/shell_wrappers.rs` executes generated wrappers in Bash, Zsh, and
+Fish with isolated configuration. All three shells are provided by the Nix dev
+shell. See docs/TEST.md for direct verification steps.
 
 ## CI/CD Workflows
 
