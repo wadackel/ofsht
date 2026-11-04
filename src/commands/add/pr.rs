@@ -38,18 +38,18 @@ impl ResolvedBranch {
     }
 }
 
-pub fn branch_name(git: &impl GitClient, pr: &PrInfo, number: u32, repo: &Path) -> Result<String> {
+fn validated_head_ref(git: &impl GitClient, pr: &PrInfo, repo: &Path) -> Result<String> {
     if pr.head_ref_name.starts_with('-') {
         anyhow::bail!("Invalid pull request branch: {}", pr.head_ref_name);
     }
-    git.run(
-        &[
-            "check-ref-format",
-            &format!("refs/heads/{}", pr.head_ref_name),
-        ],
-        Some(repo),
-    )
-    .context("Invalid pull request branch")?;
+    let head_ref = format!("refs/heads/{}", pr.head_ref_name);
+    git.run(&["check-ref-format", &head_ref], Some(repo))
+        .context("Invalid pull request branch")?;
+    Ok(head_ref)
+}
+
+pub fn branch_name(git: &impl GitClient, pr: &PrInfo, number: u32, repo: &Path) -> Result<String> {
+    validated_head_ref(git, pr, repo)?;
     if pr.is_cross_repository {
         fork_branch(git, pr, number, repo)
     } else {
@@ -64,8 +64,7 @@ pub fn process_pr(
     repo: &Path,
     color_mode: ColorMode,
 ) -> Result<ResolvedBranch> {
-    let branch = branch_name(git, pr, number, repo)?;
-    let head_ref = format!("refs/heads/{}", pr.head_ref_name);
+    let head_ref = validated_head_ref(git, pr, repo)?;
     let fetch_ref = if pr.is_cross_repository {
         format!("refs/pull/{number}/head")
     } else {
@@ -94,6 +93,12 @@ pub fn process_pr(
         )
     );
 
+    // A name that was free before fetch may now belong to unrelated local work.
+    let branch = if pr.is_cross_repository {
+        fork_branch(git, pr, number, repo)?
+    } else {
+        pr.head_ref_name.clone()
+    };
     let start_point = if git.branch_exists(&branch, Some(repo))? {
         update_unused_branch(git, &branch, &fetched, repo, color_mode)?;
         None

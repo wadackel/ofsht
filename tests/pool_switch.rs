@@ -688,3 +688,56 @@ fn changed_member_head_after_fetch_is_not_overridden() {
     assert!(stderr(&out).contains("changed"));
     assert!(stderr(&out).contains("retained"));
 }
+
+fn check_fork_name_created_during_fetch(command: &str) {
+    let f = Fixture::new();
+    let slot = f.slot("slot");
+    let base = f.head("main");
+    let tip = f.remote_commit("refs/pull/1/head", false);
+    f.pr(1, "topic", true);
+    let marker = f.temp.path().join("branch-created");
+    install_git_shim(&f, &format!("if [ \"$1\" = fetch ] && [ ! -e {} ]; then\n touch {}\n \"$real_git\" branch topic main\nfi", quoted(&marker), quoted(&marker)));
+    let args = if command == "add" {
+        vec!["add", "#1"]
+    } else {
+        vec!["switch", "#1", "--in", "slot"]
+    };
+    let out = f.run(&args);
+    if command == "add" {
+        let worktree = f
+            .repo
+            .parent()
+            .unwrap()
+            .join("repo with spaces-worktrees/pr-1-topic");
+        navigates(&out, &worktree);
+    } else {
+        refused(&out);
+        assert!(
+            stderr(&out).contains("identity changed"),
+            "{}",
+            stderr(&out)
+        );
+        assert_eq!(f.git(&slot, &["branch", "--show-current"]), "slot");
+        navigates(&f.run(&args), &slot);
+    }
+    assert_eq!(f.head("topic"), base);
+    assert_eq!(f.head("pr-1-topic"), tip);
+    assert!(!f
+        .git_result(&f.repo, &["config", "--get", "branch.topic.ofsht-pr"])
+        .status
+        .success());
+    assert_eq!(
+        f.git(&f.repo, &["config", "branch.pr-1-topic.ofsht-pr"]),
+        "1"
+    );
+}
+
+#[test]
+fn fork_name_created_during_fetch_is_not_reassigned_by_add() {
+    check_fork_name_created_during_fetch("add");
+}
+
+#[test]
+fn fork_name_created_during_fetch_is_not_reassigned_by_switch() {
+    check_fork_name_created_during_fetch("switch");
+}
