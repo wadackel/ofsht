@@ -7,11 +7,11 @@ use crate::domain::worktree_state::Operation;
 
 pub fn inspect(list: &mut WorktreeList, repo: &Path, full_status: bool) {
     let common = common_directory(repo);
-    for entry in list.entries_mut() {
+    for (index, entry) in list.entries_mut().iter_mut().enumerate() {
         let result = common
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error:#}"))
-            .and_then(|common| inspect_entry(entry, common, full_status));
+            .and_then(|common| inspect_entry(entry, common, full_status, index == 0));
         if let Err(error) = result {
             entry.state.error = Some(format!("{error:#}"));
         }
@@ -25,7 +25,12 @@ fn common_directory(path: &Path) -> Result<PathBuf> {
         .context("Failed to resolve repository identity")
 }
 
-fn inspect_entry(entry: &mut WorktreeEntry, common: &Path, full_status: bool) -> Result<()> {
+fn inspect_entry(
+    entry: &mut WorktreeEntry,
+    common: &Path,
+    full_status: bool,
+    main: bool,
+) -> Result<()> {
     let path = Path::new(&entry.path);
     match path.metadata() {
         Ok(metadata) if metadata.is_dir() => {}
@@ -42,7 +47,15 @@ fn inspect_entry(entry: &mut WorktreeEntry, common: &Path, full_status: bool) ->
     if git_path(path, "--show-toplevel")?.canonicalize()? != path.canonicalize()? {
         bail!("Registered path is not the repository worktree root");
     }
-    let git_dir = git_path(path, "--absolute-git-dir")?;
+    let git_dir = if main {
+        let admin = git_path(path, "--absolute-git-dir")?.canonicalize()?;
+        if admin != common {
+            bail!("Main worktree administration identity changed");
+        }
+        admin
+    } else {
+        RealGitClient::linked_worktree_git_dir(path)?
+    };
     let has = |name: &str| git_dir.join(name).try_exists();
     let operation = if has("rebase-merge")? {
         Some(Operation::Rebase)

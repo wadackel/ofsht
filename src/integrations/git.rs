@@ -155,6 +155,24 @@ impl RealGitClient {
     pub fn worktree_toplevel(dir: &Path) -> Result<PathBuf> {
         git_path(dir, "--show-toplevel")
     }
+
+    pub(crate) fn worktree_git_dir(dir: &Path) -> Result<PathBuf> {
+        git_path(dir, "--absolute-git-dir")
+    }
+
+    pub(crate) fn linked_worktree_git_dir(dir: &Path) -> Result<PathBuf> {
+        let admin = Self::worktree_git_dir(dir)?.canonicalize()?;
+        let backlink = std::fs::read(admin.join("gitdir"))
+            .context("Worktree has no linked registration backlink")?;
+        let backlink = path_from_git(backlink.strip_suffix(b"\n").unwrap_or(&backlink))?;
+        let declared = crate::path_utils::normalize_path_lexically(&admin.join(backlink));
+        let expected = crate::path_utils::normalize_path_lexically(&dir.join(".git"));
+        // Canonicalizing both paths would accept a stale member redirected to another worktree.
+        if declared != expected {
+            anyhow::bail!("Worktree registration identifies a different directory");
+        }
+        Ok(admin)
+    }
 }
 
 fn git_path(path: &Path, flag: &str) -> Result<PathBuf> {

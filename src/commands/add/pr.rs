@@ -7,7 +7,7 @@ use crate::integrations::gh::PrInfo;
 use crate::integrations::git::GitClient;
 
 #[derive(Debug)]
-pub(super) struct ResolvedBranch {
+pub struct ResolvedBranch {
     pub branch: String,
     pub start_point: Option<String>,
     pub fork_pr: Option<u32>,
@@ -28,7 +28,7 @@ impl ResolvedBranch {
             )
             .with_context(|| {
                 format!(
-                    "Worktree was created at {}, but its PR association could not be saved. \
+                    "Branch is checked out at {}, but its PR association could not be saved. \
                      Before repeating add, set local git config key {key:?} to {number}",
                     worktree.display()
                 )
@@ -38,19 +38,34 @@ impl ResolvedBranch {
     }
 }
 
-pub(super) fn process_pr(
+pub fn branch_name(git: &impl GitClient, pr: &PrInfo, number: u32, repo: &Path) -> Result<String> {
+    if pr.head_ref_name.starts_with('-') {
+        anyhow::bail!("Invalid pull request branch: {}", pr.head_ref_name);
+    }
+    git.run(
+        &[
+            "check-ref-format",
+            &format!("refs/heads/{}", pr.head_ref_name),
+        ],
+        Some(repo),
+    )
+    .context("Invalid pull request branch")?;
+    if pr.is_cross_repository {
+        fork_branch(git, pr, number, repo)
+    } else {
+        Ok(pr.head_ref_name.clone())
+    }
+}
+
+pub fn process_pr(
     git: &impl GitClient,
     pr: &PrInfo,
     number: u32,
     repo: &Path,
     color_mode: ColorMode,
 ) -> Result<ResolvedBranch> {
+    let branch = branch_name(git, pr, number, repo)?;
     let head_ref = format!("refs/heads/{}", pr.head_ref_name);
-    if pr.head_ref_name.starts_with('-') {
-        anyhow::bail!("Invalid pull request branch: {}", pr.head_ref_name);
-    }
-    git.run(&["check-ref-format", &head_ref], Some(repo))
-        .context("Invalid pull request branch")?;
     let fetch_ref = if pr.is_cross_repository {
         format!("refs/pull/{number}/head")
     } else {
@@ -79,11 +94,6 @@ pub(super) fn process_pr(
         )
     );
 
-    let branch = if pr.is_cross_repository {
-        fork_branch(git, pr, number, repo)?
-    } else {
-        pr.head_ref_name.clone()
-    };
     let start_point = if git.branch_exists(&branch, Some(repo))? {
         update_unused_branch(git, &branch, &fetched, repo, color_mode)?;
         None

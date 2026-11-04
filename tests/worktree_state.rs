@@ -312,6 +312,19 @@ fn unrelated_recreated_repository_never_looks_clean() {
     assert!(state["error"].as_str().unwrap().contains("repository"));
 }
 
+#[cfg(unix)]
+#[test]
+fn same_repository_alias_never_imports_another_worktrees_status() {
+    let f = Fixture::new();
+    let path = f.add("slot", "feature");
+    std::fs::rename(&path, f.temp.path().join("saved-slot")).unwrap();
+    std::os::unix::fs::symlink(&f.repo, &path).unwrap();
+    let listing = f.json(true);
+    let state = &row(&listing, &path)["state"];
+    assert!(state["dirty"].is_null());
+    assert!(state["error"].is_string());
+}
+
 #[test]
 fn json_preserves_unusual_utf8_paths_and_unborn_head_is_null() {
     let f = Fixture::new();

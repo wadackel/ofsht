@@ -62,7 +62,11 @@ pub fn canonicalize_allow_missing(path: &Path) -> PathBuf {
 /// Lexically normalize a path by resolving `.` and `..` components
 ///
 /// Does NOT resolve symlinks or touch the filesystem
-fn normalize_path_lexically(path: &Path) -> PathBuf {
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "The binary also compiles this module privately; pub would expose library internals."
+)]
+pub(crate) fn normalize_path_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {

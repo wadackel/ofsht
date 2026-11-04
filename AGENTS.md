@@ -46,6 +46,8 @@ cargo run -- ls
 cargo run -- ls --status
 cargo run -- ls --json --status
 cargo run -- cd feature-branch
+cargo run -- switch feature-branch --in slot-1
+cargo run -- switch '#123' --in slot-1
 cargo run -- rm .
 cargo run -- rm /path/to/worktree
 cargo run -- rm feature-a feature-b  # Remove multiple worktrees
@@ -111,6 +113,7 @@ src/
 │   ├── open.rs       # Open all worktrees in tmux
 │   ├── rm.rs         # Remove worktrees
 │   ├── shell_init.rs # Generate shell integration scripts
+│   ├── switch.rs     # Reuse a clean linked worktree for a branch
 │   └── sync.rs       # Sync hooks to existing worktrees
 ├── config.rs         # TOML configuration loading (local + global)
 ├── domain/           # Domain models and logic
@@ -236,7 +239,8 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **list.rs** (`cmd_list`): Format and display worktree list (interactive vs pipe mode)
 - **open.rs** (`cmd_open`): Open all worktrees in tmux windows or panes, skipping current worktree
 - **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last → branch deletion (`git branch -d` by default, `--keep-branch` / `--force-branch`)
-- **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/rm integration
+- **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/switch/rm integration
+- **switch.rs** (`cmd_switch`): Existing checkout navigation or explicit/fzf clean-member selection → validated checkout → preservation-aware hooks → zoxide → navigation path
 - **sync.rs** (`cmd_sync`): Re-apply `hooks.create` to all existing non-main worktrees with `--run`/`--copy`/`--link` filtering
 
 **Key Shared Functions** (in `commands/common.rs`):
@@ -375,7 +379,7 @@ The `add` command accepts an optional `start_point` argument:
 
 ### Shell Integration (wtp-style)
 
-**Architecture**: The `shell-init` subcommand generates shell-specific wrapper functions that intercept `cd`, `add`, and `rm` subcommands for automatic directory changing.
+**Architecture**: The `shell-init` subcommand generates shell-specific wrapper functions that intercept `cd`, `add`, `switch`, and `rm` subcommands for automatic directory changing.
 
 **Technical Constraint**: Rust binaries cannot change the parent shell's current directory due to process isolation. The shell integration solves this by generating wrapper functions that:
 1. Call the `ofsht` binary via `command ofsht` (to avoid infinite recursion)
@@ -410,6 +414,7 @@ eval "$(ofsht shell-init bash)"
 # After setup, seamless navigation
 ofsht add feature    # Creates and navigates
 ofsht cd feature     # Navigates to existing worktree
+ofsht switch other --in slot-1 # Reuses a clean linked worktree and navigates
 ofsht rm .           # Removes current worktree and returns to main
 ofsht rm feature     # Removes specified worktree (no directory change)
 ofsht ls             # Normal operation (no directory change)

@@ -10,7 +10,7 @@ function ofsht
             case --color
                 set _ofsht_color_value 1
             case '--color=*' --verbose -v
-            case cd add rm
+            case cd add rm switch
                 set _ofsht_command $_ofsht_arg
                 break
             case '*'

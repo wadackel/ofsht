@@ -26,7 +26,11 @@ pub struct AddOptions {
     pub detach: bool,
 }
 
-mod pr;
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "The binary also compiles this module privately; pub would expose library internals."
+)]
+pub(crate) mod pr;
 use pr::{process_pr, ResolvedBranch};
 
 /// Resolve branch name and start point from GitHub issue/PR

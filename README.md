@@ -24,6 +24,7 @@ A command-line tool for managing Git worktrees with automation features.
 - [Quick Start](#quick-start)
 - [Usage](#usage)
   - [Basic Operations](#basic-operations)
+  - [Switch Branches in the Pool](#switch-branches-in-the-pool)
   - [Stdin Input](#stdin-input)
   - [Sync Hook Operations](#sync-hook-operations)
   - [GitHub Integration](#github-integration)
@@ -45,9 +46,10 @@ A command-line tool for managing Git worktrees with automation features.
 - Create worktrees from branches, tags, or commits
 - List all worktrees with status information
 - Navigate to worktrees by branch name
+- Reuse a selected clean worktree for another branch with `switch`
 - Remove worktrees with automatic cleanup of merged branches (unmerged branches are kept)
 - Interactive worktree selection with fzf integration
-- Read branch / target names from stdin when piped (auto-detected for `add`, `create`, `cd`, `rm`)
+- Read branch / target names from stdin when piped (auto-detected for `add`, `create`, `switch`, `cd`, `rm`)
 
 ⚙️ **Automation & Hooks**
 - Run commands after worktree creation (e.g., `npm install`)
@@ -58,7 +60,7 @@ A command-line tool for managing Git worktrees with automation features.
 - Customize worktree paths with `{repo}` and `{branch}` variables
 
 💻 **Shell Integration**
-- Automatic directory changing for `add` and `cd` commands
+- Automatic directory changing for `add`, `switch`, `cd`, and `rm` commands
 - Shell completion for Bash, Zsh, and Fish
 - Automatic zoxide integration for quick navigation
 
@@ -354,6 +356,45 @@ Application output exits quietly when a downstream pipe closes early, such as
 
 `ofsht cd` goes to the main worktree for `@`, for the main worktree's branch name, and for its path. `ofsht rm` refuses all three.
 
+### Switch Branches in the Pool
+
+`switch` opens a branch in an existing worktree without creating another directory.
+If the branch already has a checkout, that checkout takes priority, including the
+main worktree. It is returned without fetching or rerunning hooks, so dirty or
+in-progress work can be resumed.
+
+```bash
+# Reuse a selected member when feature has no checkout
+ofsht switch feature --in slot-1
+
+# Navigate to an existing checkout, or pick a clean member with fzf
+ofsht switch feature
+
+# Reuse the current linked worktree, including from a subdirectory
+ofsht switch feature --in .
+
+# Open a GitHub PR or issue in the pool
+ofsht switch '#123' --in slot-2
+```
+
+`--in` accepts a linked worktree's name or path. Reuse is limited to present,
+unlocked, clean linked worktrees with no unfinished Git operation. Detached commits
+must be reachable from a shared branch, tag, or remote reference before that member
+can be reused. The main worktree remains the source of hook copies and links.
+Without `--in`, selection requires a terminal and fzf; cancellation changes nothing.
+
+Plain branch names follow Git's normal local-branch and remote-guess behavior;
+an unknown branch is not created from the selected member's current HEAD. A new
+`issue-N` branch starts from the caller's captured commit. PR branches retain the
+same fork association and local-commit protection as `add`.
+
+After checkout, `hooks.create` runs with the new branch context. Copies preserve
+edited destinations and links skip tracked files, as with `sync`. An ignored file
+that checkout would overwrite causes refusal. Successful switching prints the path
+for shell navigation. Hook failures retain the switched worktree, return an error,
+and can be retried with `ofsht sync <worktree>`. Fetches or safe fast-forwards completed
+before a later failure are retained and reported; no automatic rollback is attempted.
+
 ### Stdin Input
 
 When stdin is piped or redirected, `ofsht` automatically reads positional arguments from it. CLI arguments always take priority; stdin is used only when the corresponding argument is omitted.
@@ -362,6 +403,7 @@ When stdin is piped or redirected, `ofsht` automatically reads positional argume
 # add / create read the first non-empty line as the branch name
 echo my-feature | ofsht add
 echo bugfix-1 | ofsht create
+echo feature | ofsht switch --in slot-1
 
 # cd reads the first non-empty line as the worktree name
 echo feature-awesome | ofsht cd
@@ -374,7 +416,7 @@ echo ignored-name | ofsht add explicit-name   # creates "explicit-name"
 ```
 
 > [!NOTE]
-> Stdin is read only when the input is **not a TTY** (i.e. piped or redirected). On an interactive terminal with no arguments, `cd` / `rm` continue to launch fzf as before, and `add` / `create` exit with `branch name required`.
+> Stdin is read only when the input is **not a TTY** (i.e. piped or redirected). On an interactive terminal with no arguments, `cd` / `rm` continue to launch fzf as before, and `add` / `create` / `switch` exit with `branch name required`.
 
 Empty or blank piped input makes `cd` and `rm` exit with a required-target error;
 it does not launch fzf. The interactive picker previews `git status --short --branch`
@@ -386,7 +428,7 @@ display text, including paths with spaces.
 
 ### Shell Integration
 
-`ofsht` provides shell integration for automatic directory changing with `cd`, `add`, and `rm` commands.
+`ofsht` provides shell integration for automatic directory changing with `cd`, `add`, `switch`, and `rm` commands.
 
 **Setup** (one-time):
 
@@ -425,7 +467,7 @@ ofsht rm .
 ofsht create feature-awesome
 ```
 
-**How it works**: The `shell-init` command generates a wrapper function that intercepts `cd`, `add`, and `rm` subcommands, automatically executing `cd` after the operation completes.
+**How it works**: The `shell-init` command generates a wrapper function that intercepts `cd`, `add`, `switch`, and `rm` subcommands, automatically executing `cd` after the operation completes.
 
 Global options can precede the subcommand: `ofsht --color=never cd feature` still
 navigates. Help such as `ofsht rm --help` is printed normally without changing
@@ -807,6 +849,20 @@ After setup, you'll get intelligent completions:
 Global and subcommand flags are suggested only after the current word starts with `-` (e.g., `ofsht cd -<TAB>`).
 
 ## Common Workflows
+
+### Reusing a Prepared Worktree
+
+```bash
+ofsht create slot-1
+git branch feature main
+ofsht switch feature --in slot-1
+# Work in the reused directory with refreshed hooks
+ofsht switch main
+ofsht switch '#123' --in slot-1
+```
+
+Keep the member's working tree clean before reusing it. Its previous branch remains
+available, and ignored build caches stay in place unless a configured hook changes them.
 
 ### Working on Multiple Features Simultaneously
 

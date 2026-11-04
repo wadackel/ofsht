@@ -63,6 +63,12 @@ fn run() -> Result<()> {
             cli.verbose,
             color_mode,
         ),
+        Commands::Switch { branch, worktree } => commands::switch::cmd_switch(
+            branch.as_deref(),
+            worktree.as_deref(),
+            cli.verbose,
+            color_mode,
+        ),
         Commands::Create {
             branch,
             start_point,

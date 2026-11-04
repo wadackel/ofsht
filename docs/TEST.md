@@ -352,6 +352,31 @@ must be no panic. The deterministic closed-reader tests in
 `cargo test --test cli_diagnostics` also cover table output, navigation, completion
 instructions, and mutation commands after their filesystem work succeeds.
 
+## Pool Switch Verification
+
+In a disposable repository, create a linked member and an unused branch. Run
+`ofsht switch feature --in slot-1` and verify that the directory count is unchanged,
+the selected member is on feature, and its previous branch still exists. Repeat
+`ofsht switch feature` with local modifications and confirm it only returns the
+existing path without hooks or fetches. Check generated Bash, Zsh and Fish wrappers
+with help and leading global options.
+
+Use fzf to select a clean member and verify its path and resulting branch. Escape
+must return success with empty stdout and no ref/hook changes. Change the member's
+HEAD while the picker is open and verify the switch refuses the stale selection.
+Piped execution without `--in` must not launch the picker.
+
+Verify refusals preserve dirty files, submodule changes, ignored-file collisions,
+detached-only commits, locked/missing/foreign members and unfinished operations,
+including clean sequencer-only states. Redirect a registered path to main or another
+member and verify that neither is repurposed. Relative Git registration backlinks
+must still work.
+
+`cargo test --test pool_switch` exercises local/remote branches, GitHub PR/issue
+shims, fork provenance, caller-based issue commits, hook preservation/failure, and
+PR materialization followed by checkout refusal. Later failures retain fetched or
+advanced refs, report the phase, and emit no navigation path.
+
 ## Worktree State and JSON Verification
 
 Use disposable repositories to pause both merge-backend and apply-backend rebases,
@@ -1004,6 +1029,7 @@ test -f "$tmp/ofsht/SKILL.md"
 This document verified the following features:
 
 - ✅ Basic operations (add, ls, cd, rm)
+- ✅ Pool switching (existing checkout, clean-member selection, GitHub references, preservation and shell navigation)
 - ✅ Worktree names (branch, name below worktree.dir, outside directory name, path)
 - ✅ Branch deletion modes for rm (safe default, `--keep-branch`, `--force-branch`)
 - ✅ Hook functionality (create, delete)

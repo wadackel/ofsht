@@ -43,6 +43,15 @@ pub enum Commands {
         #[arg(long)]
         detach: bool,
     },
+    /// Open a branch in an existing worktree, reusing a selected clean member when needed
+    Switch {
+        /// Branch or #issue/PR reference (read from stdin when omitted)
+        #[arg(add = ArgValueCompleter::new(list_git_branches))]
+        branch: Option<String>,
+        /// Linked worktree to reuse when the branch has no existing checkout
+        #[arg(long = "in", value_name = "WORKTREE", add = ArgValueCompleter::new(list_pool_worktrees))]
+        worktree: Option<String>,
+    },
     /// Create a new worktree without navigation
     Create {
         /// Branch name for the new worktree (read from stdin when omitted and stdin is piped)
@@ -213,6 +222,13 @@ pub fn list_git_branches(current: &OsStr) -> Vec<CompletionCandidate> {
         .map(str::trim)
         .filter(|refname| refname.starts_with(&*prefix))
         .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn list_pool_worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
+    list_git_worktrees(current)
+        .into_iter()
+        .filter(|candidate| candidate.get_value() != "@")
         .collect()
 }
 
