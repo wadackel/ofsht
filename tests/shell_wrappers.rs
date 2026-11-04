@@ -149,7 +149,7 @@ fn check_shell(shell: &str) {
 }
 
 fn check_help(shell: &str, f: &Fixture) {
-    for command in ["cd", "add", "rm"] {
+    for command in ["cd", "add", "rm", "switch"] {
         for arguments in [
             vec![command, "--help"],
             vec![command, "-h"],
@@ -165,6 +165,17 @@ fn check_help(shell: &str, f: &Fixture) {
 }
 
 fn check_navigation(shell: &str, f: &Fixture) {
+    assert!(assert_result(
+        &f.run(
+            shell,
+            &f.repo,
+            &["--color=never", "switch", "feature"],
+            None
+        ),
+        0,
+        &f.worktree
+    )
+    .is_empty());
     for globals in [
         vec![],
         vec!["--color=never"],
@@ -222,6 +233,18 @@ fn check_errors(shell: &str, f: &Fixture) {
 }
 
 fn check_mutations(shell: &str, f: &Fixture) {
+    git(&f.repo, &["branch", "pool-feature"]);
+    assert!(assert_result(
+        &f.run(
+            shell,
+            &f.repo,
+            &["--verbose", "switch", "pool-feature", "--in", "slot one"],
+            None
+        ),
+        0,
+        &f.worktree
+    )
+    .is_empty());
     assert!(assert_result(
         &f.run(
             shell,

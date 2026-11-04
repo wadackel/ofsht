@@ -181,7 +181,11 @@ pub fn build_worktree_items(porcelain_output: &str, root: Option<&Path>) -> Vec<
     format_worktree_items(&list, root)
 }
 
-fn format_worktree_items(list: &WorktreeList, root: Option<&Path>) -> Vec<FzfItem> {
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "The binary also compiles this module privately; pub would expose library internals."
+)]
+pub(crate) fn format_worktree_items(list: &WorktreeList, root: Option<&Path>) -> Vec<FzfItem> {
     let entries = list.entries();
 
     if entries.is_empty() {

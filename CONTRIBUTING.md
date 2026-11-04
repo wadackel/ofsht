@@ -151,6 +151,7 @@ src/
 ├── commands/
 │   ├── common.rs        # Shared utilities for command handlers
 │   ├── open.rs          # Open all worktrees in tmux
+│   ├── switch.rs        # Reuse a clean linked worktree for a branch
 │   └── sync.rs          # Sync hooks to existing worktrees
 ├── config/
 │   ├── mod.rs           # Config module root (re-exports)
@@ -248,7 +249,8 @@ All commands in `src/commands/` modules follow a consistent pattern:
 - **list.rs** (`cmd_list`): Format and display worktree list (interactive vs pipe mode)
 - **open.rs** (`cmd_open`): Open all worktrees in tmux windows or panes, skipping the current worktree
 - **rm.rs** (`cmd_rm_many`): Multi-target removal with fzf support → duplicate detection → current worktree last → branch deletion (`git branch -d` by default, `--keep-branch` / `--force-branch`)
-- **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/rm integration
+- **shell_init.rs** (`cmd_shell_init`): Generate shell wrapper functions for cd/add/switch/rm integration
+- **switch.rs** (`cmd_switch`): Navigate to an existing checkout or select a clean linked member, switch safely, apply preservation-aware hooks and print its path
 - **sync.rs** (`cmd_sync`): Re-apply `hooks.create` (run/copy/link) to all existing non-main worktrees with `--run`/`--copy`/`--link` flag filtering
 
 **Key Shared Functions** (in `commands/common.rs`):

@@ -131,7 +131,7 @@ fn test_cd_dash_includes_flags() {
 #[test]
 fn test_toplevel_empty_word_excludes_flags() {
     let stdout = run_completion("bash", Some(1), &["ofsht", ""]);
-    for expected in ["add", "cd", "rm"] {
+    for expected in ["add", "cd", "rm", "switch"] {
         assert!(
             stdout.contains(expected),
             "{expected} must appear in top-level completion: {stdout:?}"
@@ -143,6 +143,14 @@ fn test_toplevel_empty_word_excludes_flags() {
             "{banned} must not appear in top-level completion with empty current word: {stdout:?}"
         );
     }
+}
+
+#[test]
+fn switch_selector_completion_excludes_main() {
+    let flags = run_completion("bash", Some(2), &["ofsht", "switch", "--"]);
+    assert!(flags.contains("--in"), "{flags}");
+    let main = run_completion("bash", Some(3), &["ofsht", "switch", "--in", "@"]);
+    assert!(!main.contains('@'), "{main}");
 }
 
 #[test]

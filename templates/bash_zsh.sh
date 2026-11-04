@@ -8,7 +8,7 @@ ofsht() {
         case "$_ofsht_arg" in
             --color) _ofsht_color_value=1 ;;
             --color=*|--verbose|-v) ;;
-            cd|add|rm) _ofsht_command=$_ofsht_arg; break ;;
+            cd|add|rm|switch) _ofsht_command=$_ofsht_arg; break ;;
             *) command ofsht "$@"; return $? ;;
         esac
     done

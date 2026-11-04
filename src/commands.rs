@@ -13,4 +13,5 @@ pub mod list_display;
 pub mod open;
 pub mod rm;
 pub mod shell_init;
+pub mod switch;
 pub mod sync;
