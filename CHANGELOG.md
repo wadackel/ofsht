@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-04
+
+### Added
+
+- Switch branches in reusable worktrees ([#191](https://github.com/wadackel/ofsht/pull/191))
+
+- Expose worktree state and structured listings ([#190](https://github.com/wadackel/ofsht/pull/190))
+
+- Target sync operations and report actual outcomes ([#182](https://github.com/wadackel/ofsht/pull/182))
+
+- Add --detach to create a worktree without a branch ([#178](https://github.com/wadackel/ofsht/pull/178))
+
+- Add rm --dry-run to show the removal plan without changing anything ([#173](https://github.com/wadackel/ofsht/pull/173))
+
+- Delete branches safely by default and add branch flags ([#116](https://github.com/wadackel/ofsht/pull/116))
+
+
+### CI/CD
+
+- Fix zizmor findings and add zizmor check to CI ([#114](https://github.com/wadackel/ofsht/pull/114))
+
+
+### Dependencies
+
+- Refresh Cargo lockfile ([#192](https://github.com/wadackel/ofsht/pull/192))
+
+
+### Documentation
+
+- Align configuration examples with the parser ([#183](https://github.com/wadackel/ofsht/pull/183))
+
+- Drop the CLAUDE.md symlink in favor of AGENTS.md ([#115](https://github.com/wadackel/ofsht/pull/115))
+
+
+### Fixed
+
+- Preserve help and global options in shell wrappers ([#189](https://github.com/wadackel/ofsht/pull/189))
+
+- Scope tmux opening and worktree cleanup ([#188](https://github.com/wadackel/ofsht/pull/188))
+
+- Inherit configuration fields and expand home templates ([#187](https://github.com/wadackel/ofsht/pull/187))
+
+- Improve missing-worktree hints and handle closed output pipes ([#186](https://github.com/wadackel/ofsht/pull/186))
+
+- Preserve picker paths and reject empty noninteractive input ([#185](https://github.com/wadackel/ofsht/pull/185))
+
+- Preserve worktree files when syncing hooks ([#184](https://github.com/wadackel/ofsht/pull/184))
+
+- Exclude metadata and other worktrees from hook globs ([#181](https://github.com/wadackel/ofsht/pull/181))
+
+- Expose hook context and propagate setup failures ([#180](https://github.com/wadackel/ofsht/pull/180))
+
+- Refresh and reuse pull request branches safely ([#179](https://github.com/wadackel/ofsht/pull/179))
+
+- Do not make a differently named remote start point the upstream ([#177](https://github.com/wadackel/ofsht/pull/177))
+
+- Start a new branch from the worktree the command runs in ([#176](https://github.com/wadackel/ofsht/pull/176))
+
+- Refuse to create a worktree inside, around, or on top of another ([#175](https://github.com/wadackel/ofsht/pull/175))
+
+- Point add to the worktree that already has the branch checked out ([#174](https://github.com/wadackel/ofsht/pull/174))
+
+- Refuse to remove worktrees with unreachable commits or an operation in progress ([#172](https://github.com/wadackel/ofsht/pull/172))
+
+- Match add branch names against local branches only ([#171](https://github.com/wadackel/ofsht/pull/171))
+
+- Check every rm target before any hook runs and add --force ([#170](https://github.com/wadackel/ofsht/pull/170))
+
+- Keep the default branch and clean up the creation branch in rm ([#169](https://github.com/wadackel/ofsht/pull/169))
+
+- Locate the main worktree by repository layout ([#168](https://github.com/wadackel/ofsht/pull/168))
+
+- Detect the current worktree with git rev-parse --show-toplevel ([#167](https://github.com/wadackel/ofsht/pull/167))
+
+- Reject names that match several worktrees and resolve cd to the main path ([#166](https://github.com/wadackel/ofsht/pull/166))
+
+- Resolve worktree names from worktree.dir and restore cd main ([#118](https://github.com/wadackel/ofsht/pull/118))
+
+
+### Miscellaneous
+
+- Lock workflow actions with actions.lock ([#117](https://github.com/wadackel/ofsht/pull/117))
+
+
 ## [0.8.0] - 2026-05-05
 
 ### Build
