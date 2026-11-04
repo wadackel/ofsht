@@ -315,9 +315,16 @@ fn unrelated_recreated_repository_never_looks_clean() {
 #[test]
 fn json_preserves_unusual_utf8_paths_and_unborn_head_is_null() {
     let f = Fixture::new();
-    let path = f.add("slot\twith\n\"quote", "feature");
+    let path = f.add("slot\twith\n\"quote \n", "feature");
     let listing = f.json(false);
     assert_eq!(row(&listing, &path)["path"], path.to_str().unwrap());
+    let subdirectory = path.join("sub directory");
+    std::fs::create_dir(&subdirectory).unwrap();
+    for directory in [&path, &subdirectory] {
+        let listing = json_output(&f.cli(directory, &["ls", "--json"]).output().unwrap());
+        assert_eq!(row(&listing, &path)["is_current"], true);
+        assert_eq!(row(&listing, &f.repo)["is_current"], false);
+    }
     let unborn = Fixture::create(false);
     let listing = unborn.json(true);
     assert_eq!(listing[0]["branch"], "main");

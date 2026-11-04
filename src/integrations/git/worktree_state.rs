@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-use super::{build_command, path_from_git, run_capturing_bytes, RealGitClient};
+use super::{build_command, git_path, run_capturing_bytes, RealGitClient};
 use crate::domain::worktree::{WorktreeEntry, WorktreeList};
 use crate::domain::worktree_state::Operation;
 
@@ -23,13 +23,6 @@ fn common_directory(path: &Path) -> Result<PathBuf> {
     path.join(common)
         .canonicalize()
         .context("Failed to resolve repository identity")
-}
-
-fn git_path(path: &Path, flag: &str) -> Result<PathBuf> {
-    let mut cmd = build_command(Some(path));
-    cmd.args(["rev-parse", flag]);
-    let output = run_capturing_bytes(cmd, "rev-parse")?;
-    path_from_git(output.strip_suffix(b"\n").unwrap_or(&output))
 }
 
 fn inspect_entry(entry: &mut WorktreeEntry, common: &Path, full_status: bool) -> Result<()> {

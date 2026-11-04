@@ -6,7 +6,6 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::color;
-use crate::commands::common::current_worktree_toplevel;
 use crate::commands::context::CommandContext;
 use crate::commands::list_display::format_worktree_table;
 use crate::domain::worktree::{WorktreeEntry, WorktreeList};
@@ -30,7 +29,11 @@ pub fn cmd_list(
         ctx.worktree_list_stdout()?
     };
     let root = ctx.worktree_root();
-    let current = current_worktree_toplevel().or_else(|| std::env::current_dir().ok());
+    let cwd = std::env::current_dir().ok();
+    let current = cwd
+        .as_deref()
+        .and_then(|dir| RealGitClient::worktree_toplevel(dir).ok())
+        .or(cwd);
     let mut list = WorktreeList::parse(&stdout, current.as_deref());
     let interactive = std::io::stdout().is_terminal();
     if !json && !interactive && !show_path && !status {

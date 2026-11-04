@@ -149,11 +149,19 @@ impl RealGitClient {
 
     /// Git's common directory, relative to `dir` or absolute as reported by Git.
     pub fn common_git_dir(dir: &Path) -> Result<PathBuf> {
-        let mut cmd = build_command(Some(dir));
-        cmd.args(["rev-parse", "--git-common-dir"]);
-        let output = run_capturing_bytes(cmd, "rev-parse")?;
-        path_from_git(output.strip_suffix(b"\n").unwrap_or(&output))
+        git_path(dir, "--git-common-dir")
     }
+
+    pub fn worktree_toplevel(dir: &Path) -> Result<PathBuf> {
+        git_path(dir, "--show-toplevel")
+    }
+}
+
+fn git_path(path: &Path, flag: &str) -> Result<PathBuf> {
+    let mut cmd = build_command(Some(path));
+    cmd.args(["rev-parse", flag]);
+    let output = run_capturing_bytes(cmd, "rev-parse")?;
+    path_from_git(output.strip_suffix(b"\n").unwrap_or(&output))
 }
 
 fn path_from_git(bytes: &[u8]) -> Result<PathBuf> {
