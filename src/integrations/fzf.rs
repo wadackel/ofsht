@@ -174,11 +174,14 @@ pub fn is_fzf_available() -> bool {
 /// - Non-main worktrees show the name that `ofsht cd` accepts for them
 /// - Columns are padded for alignment (except the last column)
 pub fn build_worktree_items(porcelain_output: &str, root: Option<&Path>) -> Vec<FzfItem> {
-    // Parse via the unified WorktreeList type (replaces the previous Pass 1
-    // independent scanner). Real `git worktree list --porcelain` output never
-    // has leading/trailing whitespace, so the legacy `.trim()` defense is
-    // dropped — covered by `test_build_worktree_items_no_trim_behavior_equivalent`.
-    let list = WorktreeList::parse(porcelain_output, None);
+    let mut list = WorktreeList::parse(porcelain_output, None);
+    if let Some(repo) = list.main().map(|entry| PathBuf::from(&entry.path)) {
+        crate::integrations::git::worktree_state::inspect(&mut list, &repo, true);
+    }
+    format_worktree_items(&list, root)
+}
+
+fn format_worktree_items(list: &WorktreeList, root: Option<&Path>) -> Vec<FzfItem> {
     let entries = list.entries();
 
     if entries.is_empty() {
@@ -189,16 +192,13 @@ pub fn build_worktree_items(porcelain_output: &str, root: Option<&Path>) -> Vec<
     let display_entries: Vec<(String, String, String)> = entries
         .iter()
         .zip(list.display_names(root))
-        .enumerate()
-        .map(|(index, (entry, name))| {
-            let branch = if index == 0 {
-                "[@]".to_string()
-            } else {
-                entry
-                    .branch
-                    .as_deref()
-                    .map_or_else(|| "[detached]".to_string(), |b| format!("[{b}]"))
-            };
+        .map(|(entry, name)| {
+            let mut branch = entry.branch_label();
+            let markers = entry.state.markers();
+            if !markers.is_empty() {
+                branch.push(' ');
+                branch.push_str(&markers);
+            }
 
             let path = display_path(&PathBuf::from(&entry.path));
 
@@ -239,6 +239,10 @@ pub fn build_worktree_items(porcelain_output: &str, root: Option<&Path>) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn format_items(porcelain: &str, root: Option<&Path>) -> Vec<FzfItem> {
+        format_worktree_items(&WorktreeList::parse(porcelain, None), root)
+    }
 
     #[test]
     #[serial_test::serial]
@@ -494,13 +498,12 @@ HEAD def456
 branch refs/heads/feature-branch
 
 ";
-        let items = build_worktree_items(porcelain, Some(Path::new("/worktrees")));
+        let items = format_items(porcelain, Some(Path::new("/worktrees")));
         assert_eq!(items.len(), 2);
 
-        // First item: main worktree displayed as "@" with [@] branch
         assert_eq!(items[0].value, "/path/to/main");
         assert!(items[0].display.starts_with('@'));
-        assert!(items[0].display.contains(" · [@]"));
+        assert!(items[0].display.contains(" · [main]"));
         assert!(items[0].display.contains(" · /path/to/main"));
 
         // Second item: feature branch with name and [branch]
@@ -521,7 +524,7 @@ HEAD def456
 detached
 
 ";
-        let items = build_worktree_items(porcelain, Some(Path::new("/worktrees")));
+        let items = format_items(porcelain, Some(Path::new("/worktrees")));
         assert_eq!(items.len(), 2);
         assert_eq!(items[1].value, "/path/to/detached");
         assert!(items[1].display.contains("detached"));
@@ -535,11 +538,11 @@ HEAD abc123
 branch refs/heads/main
 
 ";
-        let items = build_worktree_items(porcelain, Some(Path::new("/worktrees")));
+        let items = format_items(porcelain, Some(Path::new("/worktrees")));
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].value, "/path/to/main");
         assert!(items[0].display.starts_with('@'));
-        assert!(items[0].display.contains(" · [@]"));
+        assert!(items[0].display.contains(" · [main]"));
     }
 
     #[test]
@@ -557,7 +560,7 @@ HEAD ghi789
 branch refs/heads/fix/bar
 
 ";
-        let items = build_worktree_items(porcelain, Some(Path::new("/worktrees")));
+        let items = format_items(porcelain, Some(Path::new("/worktrees")));
         assert_eq!(items.len(), 3);
 
         // Nested worktree names should use relative path from root
@@ -584,7 +587,7 @@ HEAD ghi789
 branch refs/heads/very-long-branch-name
 
 ";
-        let items = build_worktree_items(porcelain, Some(Path::new("/worktrees")));
+        let items = format_items(porcelain, Some(Path::new("/worktrees")));
         assert_eq!(items.len(), 3);
 
         // All "·" separators should be at the same column positions
@@ -622,7 +625,7 @@ HEAD def456
 branch refs/heads/feature-branch
 
 ";
-        let items = build_worktree_items(porcelain, Some(Path::new("/worktrees")));
+        let items = format_items(porcelain, Some(Path::new("/worktrees")));
         for item in &items {
             assert_eq!(
                 item.display,
@@ -640,13 +643,12 @@ branch refs/heads/feature-branch
         // This test pins display equivalence on canonical input so any future regression
         // in the unified parser surfaces here.
         let porcelain = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /worktrees/feature\nHEAD def456\nbranch refs/heads/feature\n\n";
-        let items = build_worktree_items(porcelain, Some(Path::new("/worktrees")));
+        let items = format_items(porcelain, Some(Path::new("/worktrees")));
         assert_eq!(items.len(), 2);
-        // Main entry — name `@`, branch `[@]`
         assert!(items[0].display.starts_with('@'), "main name marker");
         assert!(
-            items[0].display.contains("[@]"),
-            "main branch marker [@] present: {}",
+            items[0].display.contains("[main]"),
+            "main branch marker [main] present: {}",
             items[0].display
         );
         // Non-main entry — branch `[feature]`

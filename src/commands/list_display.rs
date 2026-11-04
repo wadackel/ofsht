@@ -27,7 +27,7 @@ struct WorktreeDisplay {
 /// If `show_path` is false and `names` is Some: hash • name • branch • time
 /// If `show_path` is true: path • hash • name • branch • time
 ///
-/// `names` follows the order of `entries`; the main worktree's name is left blank.
+/// `names` follows the order of `entries`; the main worktree is named `@`.
 ///
 /// # Panics
 /// Panics if entries and `commit_times` have different lengths
@@ -56,33 +56,26 @@ pub fn format_worktree_table(
         } else {
             None
         };
-        let hash = entry
-            .hash
-            .clone()
-            .unwrap_or_else(|| "(unknown)".to_string());
+        let hash = entry.hash.as_ref().map_or_else(
+            || "(unknown)".to_string(),
+            |hash| hash.chars().take(8).collect::<String>(),
+        );
 
-        let name = if index == 0 {
-            None
-        } else {
-            names.and_then(|names| names.get(index).cloned())
-        };
-
-        // Main worktree (index 0) is always displayed as "@"
-        let branch = if index == 0 {
-            "[@]".to_string()
-        } else {
-            entry
-                .branch
-                .as_ref()
-                .map_or_else(|| "[detached]".to_string(), |b| format!("[{b}]"))
-        };
-        let timestamp = commit_time.as_ref().map_or_else(
+        let name = names.and_then(|names| names.get(index).cloned());
+        let branch = entry.branch_label();
+        let mut timestamp = commit_time.as_ref().map_or_else(
             || "–".to_string(),
             |dt| {
                 let duration = now.signed_duration_since(*dt);
                 HumanTime::from(duration).to_text_en(Accuracy::Rough, Tense::Past)
             },
         );
+
+        let markers = entry.state.markers();
+        if !markers.is_empty() {
+            timestamp.push_str("  ");
+            timestamp.push_str(&markers);
+        }
 
         displays.push(WorktreeDisplay {
             path,
@@ -126,7 +119,6 @@ pub fn format_worktree_table(
 
             // Apply colors to each component
             let colored_branch = if index == 0 {
-                // Main worktree [@] in green
                 color_mode.colorize_main_worktree(&d.branch)
             } else if d.branch == "[detached]" {
                 // Detached HEAD in yellow
@@ -169,6 +161,7 @@ pub fn format_worktree_table(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::worktree_state::WorktreeState;
 
     #[test]
     fn test_format_worktree_table_default_no_path() {
@@ -177,6 +170,7 @@ mod tests {
             branch: Some("main".to_string()),
             hash: Some("a1b2c3d4".to_string()),
             is_active: false,
+            state: WorktreeState::default(),
         }];
         let commit_times = vec![Some(
             DateTime::from_timestamp(Utc::now().timestamp() - 3600, 0).unwrap(),
@@ -192,8 +186,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         // Line should contain hash, branch, and timestamp (no path)
         assert!(!result[0].contains("/path/to/main"));
-        // Main worktree (first entry) should be displayed as [@]
-        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("[main]"));
         assert!(result[0].contains("a1b2c3d4"));
     }
 
@@ -204,6 +197,7 @@ mod tests {
             branch: Some("main".to_string()),
             hash: Some("a1b2c3d4".to_string()),
             is_active: false,
+            state: WorktreeState::default(),
         }];
         let commit_times = vec![Some(
             DateTime::from_timestamp(Utc::now().timestamp() - 3600, 0).unwrap(),
@@ -219,8 +213,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         // Line should contain path, hash, branch, and timestamp
         assert!(result[0].contains("/path/to/main"));
-        // Main worktree (first entry) should be displayed as [@]
-        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("[main]"));
         assert!(result[0].contains("a1b2c3d4"));
     }
 
@@ -232,12 +225,14 @@ mod tests {
                 branch: Some("main".to_string()),
                 hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
             WorktreeEntry {
                 path: "/path/to/feature-branch".to_string(),
                 branch: Some("feature".to_string()),
                 hash: Some("e5f6g7h8".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
         ];
         let commit_times = vec![
@@ -255,8 +250,7 @@ mod tests {
         assert_eq!(result.len(), 2);
         // Both lines should have same structure (no paths)
         assert!(!result[0].contains("/path/to/main"));
-        // Main worktree (first entry) should be displayed as [@]
-        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("[main]"));
         assert!(result[0].contains("a1b2c3d4"));
         assert!(!result[1].contains("/path/to/feature-branch"));
         assert!(result[1].contains("[feature]"));
@@ -272,12 +266,14 @@ mod tests {
                 branch: Some("a".to_string()),
                 hash: Some("12345678".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
             WorktreeEntry {
                 path: "/very/long/path/to/worktree".to_string(),
                 branch: Some("feature-branch".to_string()),
                 hash: Some("abcdefgh".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
         ];
         let commit_times = vec![None, None];
@@ -293,8 +289,7 @@ mod tests {
 
         // Verify that both lines contain the expected content
         assert!(result[0].contains("/short"));
-        // Main worktree (first entry) should be displayed as [@]
-        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("[a]"));
         assert!(result[0].contains("12345678"));
         assert!(result[1].contains("/very/long/path/to/worktree"));
         assert!(result[1].contains("[feature-branch]"));
@@ -312,6 +307,7 @@ mod tests {
             branch: None,
             hash: Some("deadbeef".to_string()),
             is_active: false,
+            state: WorktreeState::default(),
         }];
         let commit_times = vec![None];
 
@@ -323,8 +319,7 @@ mod tests {
             None,
         );
         assert_eq!(result.len(), 1);
-        // Main worktree (first entry) is always [@], even if detached
-        assert!(result[0].contains("[@]"));
+        assert!(result[0].contains("[detached]"));
         assert!(result[0].contains("deadbeef"));
         assert!(result[0].contains("–"));
     }
@@ -337,12 +332,14 @@ mod tests {
                 branch: Some("main".to_string()),
                 hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
             WorktreeEntry {
                 path: "/path/to/feature".to_string(),
                 branch: Some("feature".to_string()),
                 hash: Some("e5f6g7h8".to_string()),
                 is_active: true,
+                state: WorktreeState::default(),
             },
         ];
         let commit_times = vec![None, None];
@@ -370,12 +367,14 @@ mod tests {
                 branch: Some("main".to_string()),
                 hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
             WorktreeEntry {
                 path: "/path/to/feature".to_string(),
                 branch: Some("feature".to_string()),
                 hash: Some("e5f6g7h8".to_string()),
                 is_active: true,
+                state: WorktreeState::default(),
             },
         ];
         let commit_times = vec![None, None];
@@ -401,18 +400,21 @@ mod tests {
                 branch: Some("main".to_string()),
                 hash: Some("a1b2c3d4".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
             WorktreeEntry {
                 path: "/Users/test/repo-worktrees/feature".to_string(),
                 branch: Some("feature".to_string()),
                 hash: Some("e5f6g7h8".to_string()),
                 is_active: false,
+                state: WorktreeState::default(),
             },
             WorktreeEntry {
                 path: "/Users/test/repo-worktrees/docs/tweak".to_string(),
                 branch: Some("docs/tweak".to_string()),
                 hash: Some("i9j0k1l2".to_string()),
                 is_active: true,
+                state: WorktreeState::default(),
             },
         ];
         let commit_times = vec![None, None, None];
@@ -429,11 +431,9 @@ mod tests {
 
         assert_eq!(result.len(), 3);
 
-        // Main worktree (index 0) should have blank name column
-        // Format: "  a1b2c3d4            [@]  unknown" (extra spaces where the name would be)
         let main_line = &result[0];
         assert!(main_line.contains("a1b2c3d4"));
-        assert!(main_line.contains("[@]"));
+        assert!(main_line.contains("[main]"));
 
         // Feature worktree should show "feature" as name
         // Format: "  e5f6g7h8  feature  [feature]  unknown"
@@ -452,12 +452,13 @@ mod tests {
     }
 
     #[test]
-    fn test_format_worktree_table_main_only_has_no_name_column() {
+    fn test_format_worktree_table_main_only_retains_name_column() {
         let entries = vec![WorktreeEntry {
             path: "/path/to/main".to_string(),
             branch: Some("main".to_string()),
             hash: Some("a1b2c3d4".to_string()),
             is_active: false,
+            state: WorktreeState::default(),
         }];
         let commit_times = vec![None];
         let names = ["@".to_string()];
@@ -477,6 +478,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(with_names, without_names);
+        assert_eq!(with_names, ["  a1b2c3d4  @  [main]  –"]);
+        assert_eq!(without_names, ["  a1b2c3d4  [main]  –"]);
     }
 }

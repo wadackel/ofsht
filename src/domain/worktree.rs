@@ -2,15 +2,35 @@
 //!
 //! This module contains data structures and parsing logic for git worktrees.
 
+use super::worktree_state::WorktreeState;
 use crate::path_utils::{canonicalize_allow_missing, display_path};
 
 /// Worktree entry for enhanced display
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorktreeEntry {
     pub path: String,
     pub branch: Option<String>,
     pub hash: Option<String>,
     pub is_active: bool,
+    pub state: WorktreeState,
+}
+
+impl WorktreeEntry {
+    #[must_use]
+    pub fn navigation_branch(&self) -> Option<&str> {
+        self.branch
+            .as_deref()
+            .or(self.state.operation_branch.as_deref())
+    }
+
+    #[must_use]
+    pub fn branch_label(&self) -> String {
+        let branch = self.navigation_branch().unwrap_or("detached");
+        self.state.operation.map_or_else(
+            || format!("[{branch}]"),
+            |operation| format!("[{branch} ({})]", operation.label()),
+        )
+    }
 }
 
 /// Check if a worktree path matches the active path
@@ -53,56 +73,59 @@ impl WorktreeList {
     #[must_use]
     pub fn parse(porcelain: &str, active_path: Option<&std::path::Path>) -> Self {
         let mut entries = Vec::new();
-        let mut current_path: Option<String> = None;
-        let mut current_branch: Option<String> = None;
-        let mut current_hash: Option<String> = None;
-
+        let mut current: Option<WorktreeEntry> = None;
         let canonical_active =
             active_path.map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
-
-        for line in porcelain.lines() {
-            if let Some(path) = line.strip_prefix("worktree ") {
-                if let Some(prev_path) = current_path.take() {
-                    let is_active = is_path_active(&prev_path, canonical_active.as_ref());
-                    entries.push(WorktreeEntry {
-                        path: prev_path,
-                        branch: current_branch.take(),
-                        hash: current_hash.take(),
-                        is_active,
-                    });
+        let mut finish = |mut entry: WorktreeEntry| {
+            entry.is_active = is_path_active(&entry.path, canonical_active.as_ref());
+            entries.push(entry);
+        };
+        let separator = if porcelain.contains('\0') { '\0' } else { '\n' };
+        for field in porcelain.split(separator) {
+            if let Some(path) = field.strip_prefix("worktree ") {
+                if let Some(entry) = current.take() {
+                    finish(entry);
                 }
-                current_path = Some(path.to_string());
-            } else if let Some(full_hash) = line.strip_prefix("HEAD ") {
-                current_hash = Some(full_hash.chars().take(8).collect());
-            } else if let Some(branch_ref) = line.strip_prefix("branch ") {
-                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
-                current_branch = Some(branch.to_string());
-            } else if line == "detached" {
-                current_branch = None;
-            } else if line.is_empty() {
-                if let Some(prev_path) = current_path.take() {
-                    let is_active = is_path_active(&prev_path, canonical_active.as_ref());
-                    entries.push(WorktreeEntry {
-                        path: prev_path,
-                        branch: current_branch.take(),
-                        hash: current_hash.take(),
-                        is_active,
-                    });
+                current = Some(WorktreeEntry {
+                    path: path.to_string(),
+                    ..WorktreeEntry::default()
+                });
+            } else if field.is_empty() {
+                if let Some(entry) = current.take() {
+                    finish(entry);
+                }
+            } else if let Some(entry) = &mut current {
+                if let Some(hash) = field.strip_prefix("HEAD ") {
+                    entry.hash = (!hash.is_empty() && !hash.bytes().all(|b| b == b'0'))
+                        .then(|| hash.to_string());
+                } else if let Some(branch) = field.strip_prefix("branch ") {
+                    entry.branch = Some(
+                        branch
+                            .strip_prefix("refs/heads/")
+                            .unwrap_or(branch)
+                            .to_string(),
+                    );
+                } else if field == "detached" {
+                    entry.branch = None;
+                } else if field == "locked" {
+                    entry.state.locked = Some(String::new());
+                } else if let Some(reason) = field.strip_prefix("locked ") {
+                    entry.state.locked = Some(reason.to_string());
+                } else if field == "prunable" {
+                    entry.state.prunable = Some(String::new());
+                } else if let Some(reason) = field.strip_prefix("prunable ") {
+                    entry.state.prunable = Some(reason.to_string());
                 }
             }
         }
-
-        if let Some(prev_path) = current_path {
-            let is_active = is_path_active(&prev_path, canonical_active.as_ref());
-            entries.push(WorktreeEntry {
-                path: prev_path,
-                branch: current_branch,
-                hash: current_hash,
-                is_active,
-            });
+        if let Some(entry) = current {
+            finish(entry);
         }
-
         Self { entries }
+    }
+
+    pub(crate) fn entries_mut(&mut self) -> &mut [WorktreeEntry] {
+        &mut self.entries
     }
 
     /// All worktree entries in the order returned by `git worktree list --porcelain`.
@@ -165,7 +188,7 @@ impl WorktreeList {
             .non_main()
             .iter()
             .filter(|e| {
-                let by_branch = e.branch.as_deref() == Some(name);
+                let by_branch = e.navigation_branch() == Some(name);
                 let by_directory = below_root.map_or_else(
                     || directory_name(e) == Some(name) && name_below_root(e, root).is_none(),
                     |found| found.path == e.path,
@@ -214,7 +237,7 @@ impl WorktreeList {
     ) -> bool {
         // `resolve_short_name` skips the main worktree, but `cd` takes `@` and the main branch
         // to it before any name is resolved
-        let main_branch = self.main().and_then(|m| m.branch.as_deref());
+        let main_branch = self.main().and_then(WorktreeEntry::navigation_branch);
         if name == "@" || main_branch == Some(name) {
             return false;
         }
@@ -252,7 +275,7 @@ impl WorktreeList {
     pub fn cd_name(&self, entry: &WorktreeEntry, root: Option<&std::path::Path>) -> String {
         // `cd` takes the main branch to the main worktree before resolving names, so it reaches
         // main although `reaches` says no
-        match entry.branch.as_deref() {
+        match entry.navigation_branch() {
             Some(branch) if self.is_main(entry) || self.reaches(branch, entry, root) => {
                 branch.to_string()
             }
@@ -877,10 +900,10 @@ mod tests {
     }
 
     #[test]
-    fn test_worktree_list_hash_truncated_to_8_chars() {
+    fn test_worktree_list_retains_full_hash() {
         let output = "worktree /repo\nHEAD abc12345def67890\nbranch refs/heads/main\n\n";
         let list = WorktreeList::parse(output, None);
-        assert_eq!(list.entries()[0].hash.as_deref(), Some("abc12345"));
+        assert_eq!(list.entries()[0].hash.as_deref(), Some("abc12345def67890"));
     }
 
     #[test]

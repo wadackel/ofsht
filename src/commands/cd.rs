@@ -62,7 +62,8 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
     };
     let name = name.as_str();
 
-    let list = WorktreeList::parse(&stdout, None);
+    let mut list = WorktreeList::parse(&stdout, None);
+    integrations::git::worktree_state::inspect(&mut list, &ctx.repo_root, false);
 
     // "@" and the main worktree's branch: name resolution skips main because `rm` must not
     // reach it, but `cd` has to.
@@ -70,7 +71,7 @@ pub fn cmd_goto(name: Option<&str>, color_mode: crate::color::ColorMode) -> Resu
         .main()
         .context("git worktree list returned no entries")?;
     let main_path = normalize_absolute_path(&PathBuf::from(&main_entry.path));
-    if name == "@" || main_entry.branch.as_deref() == Some(name) {
+    if name == "@" || main_entry.navigation_branch() == Some(name) {
         return print_worktree_path(Path::new(&main_path));
     }
 

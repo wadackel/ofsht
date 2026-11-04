@@ -74,7 +74,11 @@ fn run() -> Result<()> {
             cli.verbose,
             color_mode,
         ),
-        Commands::Ls { show_path } => commands::list::cmd_list(show_path, color_mode),
+        Commands::Ls {
+            show_path,
+            status,
+            json,
+        } => commands::list::cmd_list(show_path, status, json, color_mode),
         Commands::Rm {
             targets,
             keep_branch,

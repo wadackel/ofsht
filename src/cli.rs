@@ -62,6 +62,12 @@ pub enum Commands {
         /// Show worktree paths
         #[arg(long)]
         show_path: bool,
+        /// Include working-tree changes and ahead/behind counts from local upstream refs
+        #[arg(long)]
+        status: bool,
+        /// Print a JSON array with worktree identity and state
+        #[arg(long, conflicts_with = "show_path")]
+        json: bool,
     },
     /// Remove a worktree
     /// When no targets are provided, fzf will be used for interactive multi-selection (if enabled)

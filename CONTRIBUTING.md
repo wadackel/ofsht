@@ -157,11 +157,14 @@ src/
 │   ├── schema.rs        # Type definitions and templates
 │   └── loader.rs        # Configuration loading logic
 ├── domain/
-│   └── worktree.rs      # Domain entities and parsers
+│   ├── worktree.rs      # Domain entities and parsers
+│   └── worktree_state.rs # Operation and availability state
 └── integrations/
     ├── mod.rs           # Integrations module root
     ├── fzf.rs           # fzf integration for interactive selection
     ├── git.rs           # Git client abstraction
+    ├── git/
+    │   └── worktree_state.rs # Read-only operation/status inspection
     ├── tmux.rs          # tmux integration for window/pane creation
     ├── zoxide.rs        # zoxide integration with graceful degradation
     └── gh/              # GitHub CLI integration

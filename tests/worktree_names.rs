@@ -96,7 +96,7 @@ impl Fixture {
         self.ofsht_in(&self.repo, args)
     }
 
-    /// The name column of `ls --show-path`, blank for the main worktree
+    /// The name column of `ls --show-path`, including `@` for the main worktree
     fn listed_names(&self) -> Vec<String> {
         let output = self.ofsht(&["ls", "--show-path"]);
         assert!(output.status.success());
@@ -366,7 +366,7 @@ fn resolve_rm_never_reaches_main_worktree() {
 #[test]
 fn names_without_outside_worktrees() {
     let fixture = Fixture::new();
-    assert_eq!(fixture.listed_names(), ["", "wt1", "wt2"]);
+    assert_eq!(fixture.listed_names(), ["@", "wt1", "wt2"]);
 }
 
 #[test]
@@ -374,7 +374,7 @@ fn names_stay_short_with_outside_worktrees() {
     let fixture = Fixture::with_outside_worktrees();
     assert_eq!(
         fixture.listed_names(),
-        ["", "wt1", "wt2", "check", "review"]
+        ["@", "wt1", "wt2", "check", "review"]
     );
 }
 
@@ -382,7 +382,7 @@ fn names_stay_short_with_outside_worktrees() {
 fn names_keep_path_below_root_for_nested_worktree() {
     let fixture = Fixture::new();
     fixture.add_worktree("other/branch", "dev/myapp-worktrees/feature/a");
-    assert_eq!(fixture.listed_names(), ["", "feature/a", "wt1", "wt2"]);
+    assert_eq!(fixture.listed_names(), ["@", "feature/a", "wt1", "wt2"]);
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn names_use_path_for_worktree_sharing_a_name() {
     fixture.add_worktree("feature/review", "dev/myapp-worktrees/review");
     assert_eq!(
         fixture.listed_names(),
-        ["", "review", "wt1", "wt2", "check", "~/tmp/review"]
+        ["@", "review", "wt1", "wt2", "check", "~/tmp/review"]
     );
 }
 
