@@ -5,6 +5,50 @@
 use super::worktree_state::WorktreeState;
 use crate::path_utils::{canonicalize_allow_missing, display_path};
 
+/// Compare strings so that ASCII digit runs order by numeric value (`o2` < `o10`)
+/// and other runs ignore ASCII case (`a` < `B`). Ties such as `o01` / `o1` or
+/// `a` / `A` fall back to plain string order to keep the order total.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    fn chunks(s: &str) -> impl Iterator<Item = &str> {
+        let mut rest = s;
+        std::iter::from_fn(move || {
+            let first = rest.chars().next()?;
+            let digit = first.is_ascii_digit();
+            let end = rest
+                .find(|c: char| c.is_ascii_digit() != digit)
+                .unwrap_or(rest.len());
+            let (chunk, tail) = rest.split_at(end);
+            rest = tail;
+            Some(chunk)
+        })
+    }
+    let mut left = chunks(a);
+    let mut right = chunks(b);
+    loop {
+        let ordering = match (left.next(), right.next()) {
+            (None, None) => return a.cmp(b),
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(x), Some(y))
+                if x.as_bytes()[0].is_ascii_digit() && y.as_bytes()[0].is_ascii_digit() =>
+            {
+                // Comparing digit counts avoids parsing runs that overflow an integer.
+                let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
+                x.len().cmp(&y.len()).then_with(|| x.cmp(y))
+            }
+            // Case-sensitive order would move `B` before `a`, unlike Git's listing
+            // with `core.ignorecase` (the macOS default).
+            (Some(x), Some(y)) => x
+                .chars()
+                .map(|c| c.to_ascii_lowercase())
+                .cmp(y.chars().map(|c| c.to_ascii_lowercase())),
+        };
+        if ordering.is_ne() {
+            return ordering;
+        }
+    }
+}
+
 /// Worktree entry for enhanced display
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorktreeEntry {
@@ -121,6 +165,9 @@ impl WorktreeList {
         if let Some(entry) = current {
             finish(entry);
         }
+        if let Some(linked) = entries.get_mut(1..) {
+            linked.sort_by(|x, y| natural_cmp(&x.path, &y.path));
+        }
         Self { entries }
     }
 
@@ -128,8 +175,8 @@ impl WorktreeList {
         &mut self.entries
     }
 
-    /// All worktree entries in the order returned by `git worktree list --porcelain`.
-    /// The main worktree (when present) is always at index 0.
+    /// All worktree entries. The main worktree (when present) is always at index 0;
+    /// the others follow in natural path order (`o2` before `o10`).
     #[must_use]
     pub fn entries(&self) -> &[WorktreeEntry] {
         &self.entries
@@ -692,6 +739,42 @@ mod tests {
     }
 
     #[test]
+    fn test_worktree_list_parse_orders_linked_worktrees_naturally() {
+        let list = list_of(&[
+            ("/z/main", None),
+            ("/w/o10", None),
+            ("/w/o2", None),
+            ("/w/o1", None),
+        ]);
+        let paths: Vec<_> = list.entries().iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["/z/main", "/w/o1", "/w/o2", "/w/o10"]);
+    }
+
+    #[test]
+    fn test_natural_cmp_compares_digit_runs_numerically() {
+        use std::cmp::Ordering::{Greater, Less};
+        assert_eq!(natural_cmp("o9", "o10"), Less);
+        assert_eq!(natural_cmp("a2b10", "a2b9"), Greater);
+        assert_eq!(natural_cmp("o2", "o2a"), Less);
+        assert_eq!(natural_cmp("abc", "abd"), Less);
+        assert_eq!(natural_cmp("a", "B"), Less);
+        assert_eq!(natural_cmp("B", "a"), Greater);
+    }
+
+    #[test]
+    fn test_natural_cmp_is_total_for_leading_zeros_and_long_numbers() {
+        use std::cmp::Ordering::{Equal, Less};
+        assert_ne!(natural_cmp("o01", "o1"), Equal);
+        assert_eq!(natural_cmp("o1", "o01"), natural_cmp("o01", "o1").reverse());
+        assert_ne!(natural_cmp("a", "A"), Equal);
+        assert_eq!(natural_cmp("A", "a"), natural_cmp("a", "A").reverse());
+        assert_eq!(
+            natural_cmp("n99999999999999999999999", "n100000000000000000000000"),
+            Less
+        );
+    }
+
+    #[test]
     fn test_worktree_list_parse_detached_head_implicit() {
         // Detached HEAD with no `branch` line and no explicit `detached` marker
         let output = "worktree /path/to/main\nHEAD abc123def456789\nbranch refs/heads/main\n\nworktree /path/to/det\nHEAD aaaaaaaaaaaaaaaa\n\n";
@@ -1063,14 +1146,14 @@ mod tests {
     fn test_resolve_short_name_reports_branch_and_root_name_collision() {
         let list = list_of(&[
             ("/work/myapp", Some("main")),
-            ("/work/myapp-worktrees/review", Some("feature/review")),
             ("/elsewhere/other", Some("review")),
+            ("/work/myapp-worktrees/review", Some("feature/review")),
         ]);
         assert_eq!(
             ambiguous_paths(&list.resolve_short_name("review", Some(root()))),
             Some(vec![
-                "/work/myapp-worktrees/review".to_string(),
-                "/elsewhere/other".to_string()
+                "/elsewhere/other".to_string(),
+                "/work/myapp-worktrees/review".to_string()
             ])
         );
     }
@@ -1280,11 +1363,11 @@ mod tests {
     fn test_short_name_is_none_when_root_worktree_shares_directory_name() {
         let list = list_of(&[
             ("/work/myapp", Some("main")),
-            ("/work/myapp-worktrees/review", Some("feature/review")),
             ("/elsewhere/review", Some("fix/typo")),
+            ("/work/myapp-worktrees/review", Some("feature/review")),
         ]);
-        let inside = &list.non_main()[0];
-        let outside = &list.non_main()[1];
+        let outside = &list.non_main()[0];
+        let inside = &list.non_main()[1];
         assert_eq!(
             list.short_name(inside, Some(root())).as_deref(),
             Some("review")
@@ -1307,10 +1390,10 @@ mod tests {
     fn test_short_name_is_none_when_another_branch_takes_the_name() {
         let list = list_of(&[
             ("/work/myapp", Some("main")),
-            ("/work/myapp-worktrees/review", Some("feature/review")),
             ("/elsewhere/other", Some("review")),
+            ("/work/myapp-worktrees/review", Some("feature/review")),
         ]);
-        assert_eq!(list.short_name(&list.non_main()[0], Some(root())), None);
+        assert_eq!(list.short_name(&list.non_main()[1], Some(root())), None);
     }
 
     #[test]
@@ -1345,10 +1428,10 @@ mod tests {
     fn test_display_names_follow_entry_order() {
         let list = list_of(&[
             ("/work/myapp", Some("main")),
-            ("/work/myapp-worktrees/wt1", Some("feature/login")),
             ("/elsewhere/check", None),
+            ("/work/myapp-worktrees/wt1", Some("feature/login")),
         ]);
-        assert_eq!(list.display_names(Some(root())), ["@", "wt1", "check"]);
+        assert_eq!(list.display_names(Some(root())), ["@", "check", "wt1"]);
     }
 
     #[test]
