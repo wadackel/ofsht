@@ -390,14 +390,14 @@ mod tests {
     fn test_build_worktree_list_keeps_outside_worktree_short() {
         let worktrees = list_of(&[
             ("/path/to/main", "main"),
-            ("/worktrees/feature", "feature"),
             ("/elsewhere/deep/review", "fix/typo"),
+            ("/worktrees/feature", "feature"),
         ]);
         let current = PathBuf::from("/path/to/main");
 
         let (list, _) = build_worktree_list(&worktrees, Some(Path::new("/worktrees")), &current);
 
-        assert_eq!(list[0].name, "feature");
-        assert_eq!(list[1].name, "review");
+        assert_eq!(list[0].name, "review");
+        assert_eq!(list[1].name, "feature");
     }
 }

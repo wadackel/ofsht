@@ -238,7 +238,8 @@ repositories, so it runs only when requested by `ls`; interactive fzf lists incl
 it automatically. `unknown` means inspection failed, not that the worktree is clean.
 These markers describe observed state and do not guarantee a worktree is safe to reuse.
 
-`--json` always writes an array to stdout without colors, in Git's worktree order.
+`--json` always writes an array to stdout without colors: the main worktree first,
+then the others in natural path order (`o2` before `o10`).
 Each object contains `name`, absolute `path`, actual `branch` (null when detached),
 full `head` (null before the first commit), `is_main`, `is_current`, and `state`.
 The `state` object contains:

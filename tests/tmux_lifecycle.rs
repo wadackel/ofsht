@@ -220,6 +220,21 @@ fn repeated_open_does_not_duplicate_windows_or_panes() {
 }
 
 #[test]
+fn open_creates_windows_in_natural_order() {
+    let f = Fixture::new();
+    for name in ["o10", "o2", "o1"] {
+        f.worktree(name);
+    }
+    let out = f.run(&["open", "--window"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let names = f.tmux(&["list-windows", "-t", &f.session, "-F", "#{window_name}"]);
+    assert_eq!(
+        names.lines().skip(1).collect::<Vec<_>>(),
+        ["o1", "o2", "o10"]
+    );
+}
+
+#[test]
 fn partial_splits_report_actual_count_and_failure() {
     let f = Fixture::new();
     for n in 0..12 {
