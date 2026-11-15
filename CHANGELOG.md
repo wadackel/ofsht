@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-15
+
+### Fixed
+
+- Silence toolchain override warning in just install ([#196](https://github.com/wadackel/ofsht/pull/196))
+
+- List worktrees in natural order ([#195](https://github.com/wadackel/ofsht/pull/195))
+
+
+### Miscellaneous
+
+- Release v0.8.1 ([#193](https://github.com/wadackel/ofsht/pull/193))
+
+
 ## [0.8.1] - 2026-11-04
 
 ### Added
