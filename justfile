@@ -43,7 +43,15 @@ test-ci:
 # === Utility commands ===
 
 install:
-    cargo install --path .
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Rustup's cargo install warns when RUSTUP_TOOLCHAIN (set by mise) picks the
+    # toolchain; `+toolchain` makes the same pick explicit. The nix dev shell's
+    # cargo inherits RUSTUP_TOOLCHAIN but rejects `+toolchain`, hence the probe.
+    if [[ -n "${RUSTUP_TOOLCHAIN:-}" ]] && cargo "+$RUSTUP_TOOLCHAIN" --version >/dev/null 2>&1; then
+        exec cargo "+$RUSTUP_TOOLCHAIN" install --path .
+    fi
+    exec cargo install --path .
 
 clean:
     cargo clean
